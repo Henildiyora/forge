@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-swarm
+  namespace: devops-swarm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devops-swarm
+  template:
+    metadata:
+      labels:
+        app: devops-swarm
+    spec:
+      containers:
+        - name: devops-swarm
+          image: devops-swarm:latest
+          ports:
+            - containerPort: 8000

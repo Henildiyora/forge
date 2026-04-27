@@ -1,0 +1,40 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  loki:
+    image: grafana/loki:3.0.0
+    ports:
+      - "3100:3100"
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    depends_on:
+      - prometheus
+      - loki
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3000:3000"
+
+  arize-phoenix:
+    image: arizephoenix/phoenix:version-4.26.0
+    ports:
+      - "6006:6006"
+
+volumes:
+  redis-data:
