@@ -1,0 +1,20 @@
+{
+  "task_id": "build-session-python_fastapi",
+  "goal": "Deploy this FastAPI app to aws lambda with a simple serverless setup",
+  "strategy": "serverless",
+  "questions_asked": 0,
+  "last_question": null,
+  "decision_payload": {
+    "strategy": "serverless",
+    "reasoning": "FORGE recommends the serverless strategy based on the project scan and goal.",
+    "requirements": [
+      "Reviewed scan results",
+      "Required runtime credentials if applicable"
+    ],
+    "what_will_be_generated": [
+      "Deployment artifacts matched to the chosen strategy"
+    ],
+    "estimated_setup_time": "~10 minutes",
+    "user_confirmed": true
+  }
+}

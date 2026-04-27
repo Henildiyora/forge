@@ -1,0 +1,4 @@
+[project]
+name = "serverless-python-aws"
+version = "0.1.0"
+

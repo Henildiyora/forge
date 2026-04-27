@@ -3,15 +3,16 @@ requires = ["hatchling>=1.25,<2.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "devops-swarm"
+name = "forge"
 version = "0.1.0"
-description = "Multi-agent autonomous DevOps and SRE platform."
+description = "Terminal-first AI-powered DevOps and SRE platform."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110,<0.120",
     "langgraph>=0.1,<0.2",
     "langchain-anthropic>=0.1,<0.2",
+    "openai>=1.0,<2.0",
     "redis>=5.0,<6.0",
     "pydantic>=2.0,<3.0",
     "pydantic-settings>=2.0,<3.0",
@@ -35,14 +36,14 @@ dev = [
 ]
 
 [project.scripts]
-swarm = "swarm.cli.main:app"
+forge = "forge.cli.main:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["swarm"]
+packages = ["forge"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests", "swarm"]
+testpaths = ["tests", "forge"]
 markers = [
     "unit: fast isolated unit tests",
     "integration: integration-style tests for composed components",
@@ -58,4 +59,4 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-packages = ["swarm", "tests"]
+packages = ["forge", "tests"]

@@ -1,0 +1,7 @@
+{
+  "task_id": "build-fb5593ce",
+  "strategy": "serverless",
+  "files": [
+    "serverless.yml"
+  ]
+}

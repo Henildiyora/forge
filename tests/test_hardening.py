@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from swarm.core.approvals import approval_store
-from swarm.core.config import Settings
-from swarm.core.hardening import hardening_store, run_hardening_suite
-from swarm.core.observability import observability_store
+from forge.core.approvals import approval_store
+from forge.core.config import Settings
+from forge.core.hardening import hardening_store, run_hardening_suite
+from forge.core.observability import observability_store
 from tests.conftest import FakeRedisStreamClient
 
 

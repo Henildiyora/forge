@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from swarm.agents.base import BaseAgent
-from swarm.core.config import Settings
-from swarm.core.events import EventType, SwarmEvent
-from swarm.core.message_bus import MessageBus
+from forge.agents.base import BaseAgent
+from forge.core.config import Settings
+from forge.core.events import EventType, SwarmEvent
+from forge.core.message_bus import MessageBus
 from tests.conftest import FakeRedisStreamClient
 
 

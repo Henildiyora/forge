@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from swarm.core.config import Settings
-from swarm.core.exceptions import InsufficientEvidenceError
-from swarm.core.llm import LLMClient, LLMResponse
+from forge.core.config import Settings
+from forge.core.exceptions import InsufficientEvidenceError
+from forge.core.llm import LLMClient, LLMResponse
 
 
 class StubLLMProvider:

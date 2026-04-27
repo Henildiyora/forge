@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from swarm.core.config import Settings
+from forge.core.config import Settings
 
 
 class FakeRedisStreamClient:
@@ -119,3 +119,18 @@ def node_express_project(sample_projects_root: Path) -> Path:
 @pytest.fixture
 def go_service_project(sample_projects_root: Path) -> Path:
     return sample_projects_root / "go_service"
+
+
+@pytest.fixture
+def brownfield_fastapi_project(sample_projects_root: Path) -> Path:
+    return sample_projects_root / "brownfield_fastapi"
+
+
+@pytest.fixture
+def serverless_aws_project(sample_projects_root: Path) -> Path:
+    return sample_projects_root / "serverless_python_aws"
+
+
+@pytest.fixture
+def serverless_gcp_project(sample_projects_root: Path) -> Path:
+    return sample_projects_root / "serverless_python_gcp"

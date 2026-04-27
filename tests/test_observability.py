@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from swarm.core.approvals import approval_store
-from swarm.core.observability import observability_store
-from swarm.orchestrator.state import AgentResult, SwarmState
+from forge.core.approvals import approval_store
+from forge.core.observability import observability_store
+from forge.orchestrator.state import AgentResult, SwarmState
 
 
 def test_observability_store_summarizes_runs_and_pending_approvals() -> None:

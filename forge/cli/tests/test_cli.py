@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from typer.testing import CliRunner
+
+from forge.cli.main import app
+from forge.core.approvals import approval_store
+
+
+def test_status_command() -> None:
+    runner = CliRunner()
+    result = runner.invoke(app, ["status"])
+    assert result.exit_code == 0
+    assert "structured build conversations" in result.stdout
+    assert "approval checkpoints" in result.stdout
+    assert "hardening suite" in result.stdout
+
+
+def test_connect_command_saves_project_preferences(tmp_path: Path) -> None:
+    runner = CliRunner()
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "connect",
+            str(project),
+            "--backend",
+            "ollama",
+            "--model",
+            "llama3.1:8b",
+            "--approval-transport",
+            "slack",
+            "--cloud-provider",
+            "aws",
+        ],
+    )
+
+    assert result.exit_code == 0
+    connection_path = project / ".forge" / "connection.json"
+    assert connection_path.exists()
+    payload = json.loads(connection_path.read_text(encoding="utf-8"))
+    assert payload["llm_backend"] == "ollama"
+    assert payload["approval_transport"] == "slack"
+    assert payload["cloud_provider"] == "aws"
+
+
+def test_index_command_persists_scan_result(python_fastapi_project: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["index", str(python_fastapi_project)])
+
+    assert result.exit_code == 0
+    index_path = python_fastapi_project / ".forge" / "index.json"
+    assert index_path.exists()
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    assert payload["framework"] == "fastapi"
+    assert payload["service_count"] >= 1
+
+
+def test_build_command_generates_serverless_artifacts(
+    tmp_path: Path,
+    python_fastapi_project: Path,
+) -> None:
+    runner = CliRunner()
+    output_dir = tmp_path / "artifacts"
+
+    result = runner.invoke(
+        app,
+        [
+            "build",
+            str(python_fastapi_project),
+            "--goal",
+            "Deploy this FastAPI app to aws lambda with a simple serverless setup",
+            "--output-dir",
+            str(output_dir),
+            "--auto-approve",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "FORGE recommends: serverless" in result.stdout
+    assert (output_dir / "serverless.yml").exists()
+    session_path = python_fastapi_project / ".forge" / "session.json"
+    assert session_path.exists()
+    session_payload = json.loads(session_path.read_text(encoding="utf-8"))
+    assert session_payload["strategy"] == "serverless"
+
+
+def test_monitor_command_can_escalate_to_incident_workflow() -> None:
+    approval_store.reset()
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "monitor",
+            "payments",
+            "--incident",
+            "--error-rate",
+            "0.11",
+            "--latency-p95-ms",
+            "900",
+            "--restart-count",
+            "2",
+            "--error-log-count",
+            "4",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "approval_requested" in result.stdout
+    assert "Approval request id:" in result.stdout
+    assert len(approval_store.list_requests(status="pending")) == 1
+
+
+def test_approvals_commands_can_list_and_grant_requests() -> None:
+    approval_store.reset()
+    request = approval_store.create_request(
+        task_id="incident-1",
+        workflow_type="incident",
+        severity="high",
+        summary="Approval needed",
+        reason="High severity incident",
+        proposed_action="Rollback deployment",
+        evidence=["Error rate is elevated."],
+    )
+    runner = CliRunner()
+
+    list_result = runner.invoke(app, ["approvals", "list"])
+    grant_result = runner.invoke(
+        app,
+        ["approvals", "grant", request.id, "--reviewer", "alice", "--note", "approved"],
+    )
+
+    assert list_result.exit_code == 0
+    assert request.id in list_result.stdout
+    assert grant_result.exit_code == 0
+    assert "Granted approval" in grant_result.stdout
+    stored = approval_store.get_request(request.id)
+    assert stored is not None
+    assert stored.status == "granted"
