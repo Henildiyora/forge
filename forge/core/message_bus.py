@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
+from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable, Mapping
 from json import JSONDecodeError
 from typing import Protocol
@@ -70,6 +72,17 @@ class MessageBus:
 
         client = Redis.from_url(settings.redis_url, decode_responses=False)
         return cls(settings=settings, stream_client=client)
+
+    @classmethod
+    def in_memory(cls, settings: Settings) -> MessageBus:
+        """Create a message bus that buffers events in-process.
+
+        Use this when Redis is unavailable or undesired (CLI runs, tests,
+        single-process embeds). Behaviour mirrors Redis Streams closely enough
+        for the publish/consume contract used by FORGE agents.
+        """
+
+        return cls(settings=settings, stream_client=InMemoryStreamClient())
 
     def stream_for(self, agent_name: str) -> str:
         """Return the canonical Redis stream name for an agent."""
@@ -262,3 +275,99 @@ class MessageBus:
             decoded_value = value.decode("utf-8") if isinstance(value, bytes) else value
             decoded[decoded_key] = decoded_value
         return decoded
+
+
+class InMemoryStreamClient:
+    """Process-local stream client that satisfies :class:`SupportsRedisStreams`.
+
+    Implements just enough of the Redis Streams contract to publish events,
+    create consumer groups, and read pending messages. Events are kept in
+    insertion order with monotonic ``"<count>-0"`` ids.
+    """
+
+    def __init__(self) -> None:
+        self._streams: dict[str, list[tuple[str, dict[str, str]]]] = defaultdict(list)
+        self._next_id: dict[str, int] = defaultdict(int)
+        self._groups: dict[tuple[str, str], int] = {}
+        self._delivered: dict[tuple[str, str], deque[str]] = defaultdict(deque)
+        self._counter = itertools.count(1)
+
+    async def xadd(
+        self,
+        name: str,
+        fields: Mapping[str, str],
+        maxlen: int | None = None,
+        approximate: bool = True,
+    ) -> str:
+        del approximate
+        seq = self._next_id[name]
+        self._next_id[name] = seq + 1
+        message_id = f"{seq}-0"
+        self._streams[name].append((message_id, dict(fields)))
+        if maxlen is not None and len(self._streams[name]) > maxlen:
+            overflow = len(self._streams[name]) - maxlen
+            del self._streams[name][:overflow]
+        return message_id
+
+    async def xgroup_create(
+        self,
+        name: str,
+        groupname: str,
+        id: str = "$",
+        mkstream: bool = False,
+    ) -> object:
+        if (name, groupname) in self._groups:
+            raise RuntimeError("BUSYGROUP Consumer Group name already exists")
+        if not mkstream and name not in self._streams:
+            raise RuntimeError("NOGROUP No such key or stream")
+        if id == "0":
+            cursor = 0
+        else:
+            cursor = len(self._streams[name])
+        self._groups[(name, groupname)] = cursor
+        return True
+
+    async def xreadgroup(
+        self,
+        groupname: str,
+        consumername: str,
+        streams: Mapping[str, str],
+        count: int = 1,
+        block: int | None = None,
+    ) -> list[tuple[str, list[tuple[str, Mapping[bytes | str, bytes | str]]]]]:
+        del consumername, block
+        results: list[tuple[str, list[tuple[str, Mapping[bytes | str, bytes | str]]]]] = []
+        for stream_name in streams:
+            cursor = self._groups.get((stream_name, groupname), 0)
+            entries = self._streams.get(stream_name, [])
+            new_entries = entries[cursor : cursor + count]
+            if not new_entries:
+                continue
+            self._groups[(stream_name, groupname)] = cursor + len(new_entries)
+            decoded = [
+                (mid, {k: v for k, v in fields.items()}) for mid, fields in new_entries
+            ]
+            results.append((stream_name, decoded))
+            self._delivered[(stream_name, groupname)].extend(mid for mid, _ in new_entries)
+        return results
+
+    async def xack(self, name: str, groupname: str, *ids: str) -> int:
+        delivered = self._delivered.get((name, groupname))
+        if not delivered:
+            return 0
+        acked = 0
+        for message_id in ids:
+            try:
+                delivered.remove(message_id)
+                acked += 1
+            except ValueError:
+                continue
+        return acked
+
+    async def close(self) -> None:
+        return None
+
+    def stream_length(self, name: str) -> int:
+        """Test helper exposing the number of buffered events on a stream."""
+
+        return len(self._streams.get(name, []))

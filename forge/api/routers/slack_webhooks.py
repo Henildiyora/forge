@@ -6,6 +6,7 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from forge.api.dependencies import get_bus, get_checkpoint_store, get_settings
+from forge.core import audit
 from forge.core.checkpoints import CheckpointStore
 from forge.core.config import Settings
 from forge.core.events import EventType, SwarmEvent
@@ -56,6 +57,8 @@ async def handle_slack_action(
 
     action_id = str(action.get("action_id", ""))
     task_id = str(action.get("value", ""))
+    user_block = payload.get("user", {})
+    slack_user = user_block.get("name") if isinstance(user_block, dict) else None
     if action_id.startswith("approve_"):
         event_type = EventType.APPROVAL_GRANTED
         await resume_approved_workflow(
@@ -64,10 +67,21 @@ async def handle_slack_action(
             task_id=task_id,
             approved_by="slack",
         )
+        audit_action: audit.AuditAction = "approval_granted"
     elif action_id.startswith("reject_"):
         event_type = EventType.APPROVAL_REJECTED
+        audit_action = "approval_rejected"
     else:
         event_type = EventType.REINVESTIGATION_REQUESTED
+        audit_action = "slack_action_received"
+    audit.record(
+        actor="slack_webhook",
+        action=audit_action,
+        target=f"task={task_id}",
+        task_id=task_id,
+        approval_id=task_id,
+        evidence=[f"slack_user={slack_user or 'unknown'}", f"action_id={action_id}"],
+    )
     await bus.publish(
         SwarmEvent(
             type=event_type,

@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-fastapi
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sample-fastapi
+  template:
+    metadata:
+      labels:
+        app: sample-fastapi
+    spec:
+      containers:
+      - name: sample-fastapi
+        image: ghcr.io/devops-forge/sample-fastapi:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        envFrom:
+        - configMapRef:
+            name: sample-fastapi-config

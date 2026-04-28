@@ -8,6 +8,7 @@ import typer
 from forge.agents.librarian.agent import LibrarianAgent
 from forge.cli.runtime import cli_settings, local_message_bus, run_async
 from forge.conversation.engine import ConversationEngine
+from forge.core import audit
 from forge.core.builds import (
     generate_strategy_artifacts,
     index_project,
@@ -52,6 +53,8 @@ def build(
     settings = cli_settings()
     bus = local_message_bus(settings)
     workspace = ForgeWorkspace(resolved_project_path, settings)
+    workspace.ensure()
+    audit.configure_default_audit_log(workspace.workspace_dir / "audit.log")
     connection = workspace.load_connection() or ConnectionProfile(
         llm_backend=settings.llm_backend,
         llm_model=settings.llm_model,
@@ -136,6 +139,14 @@ def build(
         workspace=workspace,
     )
     typer.echo(f"Wrote {len(written)} artifact(s) to: {Path(artifact_dir).resolve()}")
+    audit.record(
+        actor="forge_cli",
+        action="artifact_written",
+        target=str(Path(artifact_dir).resolve()),
+        task_id=generated.task_id,
+        evidence=generated.evidence[-3:],
+        detail={"strategy": decision.strategy.value, "files": written},
+    )
 
     sandbox_validation = run_async(
         validate_kubernetes_build(

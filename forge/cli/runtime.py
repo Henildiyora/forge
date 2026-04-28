@@ -1,56 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine, Mapping
+from collections.abc import Coroutine
 from typing import Any, TypeVar
 
 from forge.core.config import Settings
 from forge.core.logging import configure_logging
-from forge.core.message_bus import MessageBus
+from forge.core.message_bus import InMemoryStreamClient, MessageBus
 
 T = TypeVar("T")
 
 
-class LocalStreamClient:
-    """Minimal in-process stream client for CLI workflow invocation."""
-
-    async def xadd(
-        self,
-        name: str,
-        fields: Mapping[str, str],
-        maxlen: int | None = None,
-        approximate: bool = True,
-    ) -> str:
-        del name, fields, maxlen, approximate
-        return "0-0"
-
-    async def xgroup_create(
-        self,
-        name: str,
-        groupname: str,
-        id: str = "$",
-        mkstream: bool = False,
-    ) -> object:
-        del name, groupname, id, mkstream
-        return True
-
-    async def xreadgroup(
-        self,
-        groupname: str,
-        consumername: str,
-        streams: Mapping[str, str],
-        count: int = 1,
-        block: int | None = None,
-    ) -> list[tuple[str, list[tuple[str, Mapping[bytes | str, bytes | str]]]]]:
-        del groupname, consumername, streams, count, block
-        return []
-
-    async def xack(self, name: str, groupname: str, *ids: str) -> int:
-        del name, groupname
-        return len(ids)
-
-    async def close(self) -> None:
-        return None
+LocalStreamClient = InMemoryStreamClient
+"""Backwards-compatible alias for the in-memory stream client."""
 
 
 def cli_settings() -> Settings:
@@ -62,9 +24,13 @@ def cli_settings() -> Settings:
 
 
 def local_message_bus(settings: Settings) -> MessageBus:
-    """Create an in-memory message bus for direct workflow execution."""
+    """Create an in-memory message bus for direct workflow execution.
 
-    return MessageBus(settings=settings, stream_client=LocalStreamClient())
+    No Redis required: events are buffered in-process so the CLI works fully
+    offline. Equivalent to :meth:`MessageBus.in_memory`.
+    """
+
+    return MessageBus.in_memory(settings)
 
 
 def run_async(awaitable: Coroutine[Any, Any, T]) -> T:

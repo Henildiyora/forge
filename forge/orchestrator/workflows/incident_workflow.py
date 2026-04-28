@@ -7,7 +7,12 @@ from langgraph.graph import END, StateGraph
 
 from forge.agents.captain.agent import CaptainAgent
 from forge.agents.remediation.agent import RemediationAgent
-from forge.agents.remediation.fix_evaluator import FixEvaluation, FixProposal, RootCauseHypothesis
+from forge.agents.remediation.fix_evaluator import (
+    FixEvaluation,
+    FixProposal,
+    RootCauseHypothesis,
+    assert_hypothesis_is_grounded,
+)
 from forge.core.approvals import approval_store
 from forge.core.checkpoints import CheckpointRecord, CheckpointStore
 from forge.core.observability import observability_store
@@ -121,6 +126,10 @@ def build_incident_workflow(captain_agent: CaptainAgent) -> TypedStateWorkflow:
     async def approval_request_node(state: SwarmState) -> SwarmState:
         node_logger = logger.bind(node="approval_request", task_id=state.task_id)
         proposal = FixProposal.model_validate(state.alert_data["fix_proposal"])
+        hypothesis = RootCauseHypothesis.model_validate(
+            state.alert_data["root_cause_hypothesis"]
+        )
+        assert_hypothesis_is_grounded(hypothesis)
         raw_decision_data = state.alert_data.get("incident_decision", {})
         decision_data = raw_decision_data if isinstance(raw_decision_data, dict) else {}
         request = approval_store.create_request(

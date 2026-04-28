@@ -30,7 +30,13 @@ class CloudTaskResult(BaseModel):
 
 
 class CloudSpecialistAgent(BaseAgent):
-    """Read-only cloud inventory and assessment agent."""
+    """Read-only cloud inventory and assessment agent.
+
+    POLICY: This agent intentionally exposes ONLY read paths in v0.1.
+    Cloud writes (create/delete/update against AWS, GCP, or Azure) are
+    deferred. If you add a write method here, you must also extend the
+    LiveExecutionGate to cover the new surface and update docs/trust.md.
+    """
 
     agent_name = "cloud_specialist"
 

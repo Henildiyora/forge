@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from forge.core import audit
 from forge.core.config import Settings
 from forge.core.exceptions import ConfigurationError, SwarmError
 
@@ -245,6 +246,13 @@ class KubectlClient:
 
         gate_result = self.live_execution_gate(context)
         if not gate_result.allowed:
+            audit.record(
+                actor="k8s_specialist",
+                action="live_gate_blocked",
+                target=f"namespace={namespace}",
+                task_id=context.task_id,
+                evidence=[gate_result.reason],
+            )
             raise ConfigurationError(gate_result.reason)
         for manifest_name, manifest_content in manifests.items():
             del manifest_name
@@ -263,6 +271,17 @@ class KubectlClient:
             rollback_triggered=False,
         )
         self.audit_log.append(record)
+        audit.record(
+            actor="k8s_specialist",
+            action="kubectl_apply",
+            target=f"namespace={namespace} manifests={sorted(manifests)}",
+            task_id=context.task_id,
+            evidence=[f"approved_by={approved_by or 'unknown'}"],
+            detail={
+                "manifest_names": sorted(manifests),
+                "namespace": namespace,
+            },
+        )
         return record
 
     async def rollback_deployment(
@@ -296,6 +315,18 @@ class KubectlClient:
             rollback_triggered=True,
         )
         self.audit_log.append(record)
+        audit.record(
+            actor="k8s_specialist",
+            action="kubectl_rollback",
+            target=f"namespace={namespace} deployment={deployment_name}",
+            task_id=task_id,
+            evidence=[f"to_revision={revision}"],
+            detail={
+                "deployment_name": deployment_name,
+                "namespace": namespace,
+                "revision": revision,
+            },
+        )
         return record
 
     def live_execution_gate(self, context: LiveExecutionContext) -> GateResult:

@@ -9,6 +9,7 @@ from forge.agents.remediation.fix_evaluator import (
     FixEvaluator,
     FixProposal,
     RootCauseHypothesis,
+    assert_hypothesis_is_grounded,
 )
 from forge.core.checkpoints import CheckpointStore
 from forge.core.config import Settings
@@ -108,6 +109,7 @@ class RemediationAgent(BaseAgent):
         deployment_name = str(alert_data.get("deployment_name", service or "app"))
         previous_revision = str(alert_data.get("previous_revision", "1"))
         if recent_change or error_rate >= 0.10:
+            assert_hypothesis_is_grounded(hypothesis)
             return FixProposal(
                 strategy="rollback",
                 summary=f"Rollback the latest {service} deployment in {namespace}.",
@@ -127,6 +129,7 @@ class RemediationAgent(BaseAgent):
                 previous_revision=previous_revision,
             )
         if hypothesis.confidence >= 0.70:
+            assert_hypothesis_is_grounded(hypothesis)
             return FixProposal(
                 strategy="config_change",
                 summary=f"Adjust runtime configuration for {service}.",

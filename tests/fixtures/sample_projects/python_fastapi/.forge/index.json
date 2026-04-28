@@ -14,9 +14,9 @@
   "service_count": 1,
   "detected_infra": [],
   "has_existing_infra": false,
-  "file_count": 5,
+  "file_count": 6,
   "evidence": [
-    "Scanned 5 files in python_fastapi.",
+    "Scanned 6 files in python_fastapi.",
     "Detected language python.",
     "Detected framework fastapi.",
     "Detected entry point main.py.",

@@ -4,6 +4,16 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from forge.core.exceptions import InsufficientEvidenceError
+
+MIN_HYPOTHESIS_CONFIDENCE = 0.70
+"""Minimum confidence required before a hypothesis may leave the agent.
+
+This is the FORGE hallucination hard stop: any LLM-produced root-cause that
+falls below this threshold MUST be sent back for reinvestigation, not shown
+to humans as a recommendation.
+"""
+
 
 class EvidenceItem(BaseModel):
     """Weighted evidence collected during incident investigation."""
@@ -19,6 +29,32 @@ class RootCauseHypothesis(BaseModel):
     summary: str = Field(description="Most likely root cause under investigation.")
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: list[EvidenceItem] = Field(default_factory=list)
+
+
+def assert_hypothesis_is_grounded(hypothesis: RootCauseHypothesis) -> None:
+    """Raise :class:`InsufficientEvidenceError` if the hypothesis fails the guard.
+
+    A hypothesis is grounded only when:
+
+    * at least one evidence item is attached;
+    * its confidence is at or above :data:`MIN_HYPOTHESIS_CONFIDENCE`.
+
+    Callers that want to surface a hypothesis to a human (Slack approval, web
+    UI, audit log) MUST run this guard first. Hypotheses that fail must be
+    rerouted into the reinvestigation loop.
+    """
+
+    if not hypothesis.evidence:
+        raise InsufficientEvidenceError(
+            "RootCauseHypothesis carries no evidence; refusing to surface "
+            "unsupported diagnoses."
+        )
+    if hypothesis.confidence < MIN_HYPOTHESIS_CONFIDENCE:
+        raise InsufficientEvidenceError(
+            "RootCauseHypothesis confidence "
+            f"{hypothesis.confidence:.2f} is below the FORGE guard threshold "
+            f"{MIN_HYPOTHESIS_CONFIDENCE:.2f}; reinvestigate before recommending."
+        )
 
 
 class FixProposal(BaseModel):
