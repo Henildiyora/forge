@@ -14,6 +14,15 @@ curl -fsSL https://raw.githubusercontent.com/Henildiyora/forge/main/install.sh |
 This installs FORGE globally with `pipx`. No Python virtual environment to
 manage. No API keys required.
 
+If `forge` is not found after install, run:
+
+```bash
+pipx ensurepath
+exec $SHELL -l
+which forge
+forge doctor --quick
+```
+
 ## Quick start
 
 ```bash

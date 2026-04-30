@@ -27,7 +27,7 @@ class ClarificationQuestion(BaseModel):
     def render_terminal_box(self) -> str:
         """Render the prompt in the structured terminal format required by Phase 2."""
 
-        width = 53
+        width = 79
         lines = [
             "FORGE needs one more thing to recommend the",
             "right deployment strategy:",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import sys
 from typing import Annotated
@@ -73,6 +74,17 @@ def doctor(
         table.add_row("docker", _OK, shutil.which("docker") or "")
     else:
         table.add_row("docker (optional)", _WARN, "Only needed for docker_compose strategy")
+
+    local_bin = os.path.expanduser("~/.local/bin")
+    path_entries = os.environ.get("PATH", "").split(":")
+    if local_bin in path_entries:
+        table.add_row("pipx PATH", _OK, f"{local_bin} is on PATH")
+    else:
+        table.add_row(
+            "pipx PATH",
+            _WARN,
+            f"{local_bin} missing from PATH; run `pipx ensurepath` and restart shell",
+        )
 
     if shutil.which("vcluster"):
         table.add_row("vcluster", _OK, shutil.which("vcluster") or "")

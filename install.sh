@@ -49,8 +49,16 @@ green "✓ forge installed"
 
 if ! command -v forge >/dev/null 2>&1; then
   yellow "forge is installed but not on your PATH yet."
-  echo "Add this to your shell rc and restart your terminal:"
+  echo "Run this once to auto-configure PATH:"
+  echo "  pipx ensurepath"
+  echo
+  echo "Then restart your shell."
+  echo "If it still fails, add this to your shell rc manually:"
   echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  echo
+  echo "Quick verify after restart:"
+  echo "  which forge"
+  echo "  forge doctor --quick"
   exit 0
 fi
 

@@ -140,6 +140,7 @@ def build(
         workspace=workspace,
     )
     typer.echo(f"Wrote {len(written)} artifact(s) to: {Path(artifact_dir).resolve()}")
+    _print_next_steps(artifact_dir=Path(artifact_dir), strategy=decision.strategy)
     audit.record(
         actor="forge_cli",
         action="artifact_written",
@@ -188,3 +189,22 @@ def build(
             )
             typer.echo(f"Approval request id: {request.id}")
             typer.echo(f"Review URL: {approval_url}")
+
+
+def _print_next_steps(*, artifact_dir: Path, strategy: DeploymentStrategy) -> None:
+    resolved = artifact_dir.expanduser().resolve()
+    guide_path = resolved / "instruction_deploy.md"
+    typer.echo("Next steps:")
+    typer.echo(f"  1) Open the deployment guide: {guide_path}")
+    typer.echo("  2) Review generated files and adjust image/env settings if needed")
+    if strategy == DeploymentStrategy.DOCKER_COMPOSE:
+        typer.echo("  3) Run: cd .forge/generated && docker compose -f docker-compose.generated.yml up --build")
+    elif strategy == DeploymentStrategy.KUBERNETES:
+        typer.echo("  3) Run: cd .forge/generated && kubectl apply -f deployment.yaml -f service.yaml")
+    elif strategy == DeploymentStrategy.SERVERLESS:
+        typer.echo("  3) Run: cd .forge/generated && serverless deploy")
+    elif strategy == DeploymentStrategy.CICD_ONLY:
+        typer.echo("  3) Copy `.github/workflows/generated-ci.yml` into your repo and commit it")
+    else:
+        typer.echo("  3) Review supplemental platform files in `.forge/generated`")
+    typer.echo("  4) If anything is unclear, rerun `forge build --goal \"...\"` with more detail.")

@@ -86,7 +86,9 @@ def test_build_command_generates_serverless_artifacts(
 
     assert result.exit_code == 0
     assert "FORGE recommends: serverless" in result.stdout
+    assert "Open the deployment guide" in result.stdout
     assert (output_dir / "serverless.yml").exists()
+    assert (output_dir / "instruction_deploy.md").exists()
     session_path = python_fastapi_project / ".forge" / "session.json"
     assert session_path.exists()
     session_payload = json.loads(session_path.read_text(encoding="utf-8"))
@@ -184,3 +186,14 @@ def test_approvals_commands_can_list_and_grant_requests() -> None:
     stored = approval_store.get_request(request.id)
     assert stored is not None
     assert stored.status == "granted"
+
+
+def test_doctor_reports_missing_pipx_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = CliRunner()
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    result = runner.invoke(app, ["doctor", "--quick"])
+
+    assert result.exit_code == 0
+    assert "pipx PATH" in result.stdout
+    assert "run `pipx ensurepath`" in result.stdout

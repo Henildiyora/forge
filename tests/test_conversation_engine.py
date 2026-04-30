@@ -4,6 +4,7 @@ import pytest
 
 from forge.agents.librarian.ast_analyzer import CodebaseScanResult
 from forge.conversation.engine import ConversationEngine
+from forge.conversation.questions import ClarificationQuestion
 from forge.core.config import Settings
 from forge.core.llm import LLMClient
 
@@ -64,3 +65,21 @@ async def test_conversation_engine_asks_docker_vs_k8s_on_conflicting_signals() -
     engine.record_answer(question, "docker_compose")
     selection = engine.select_strategy(intent)
     assert selection.strategy.value == "docker_compose"
+
+
+@pytest.mark.asyncio
+async def test_conversation_engine_uses_safe_defaults_for_unsure_answers() -> None:
+    scan = _scan_result().model_copy(update={"service_count": 4})
+    engine = ConversationEngine(LLMClient(Settings(llm_backend="heuristic")), scan)
+
+    intent = await engine.interpret_intent("I do not know how to deploy this, please help")
+    strategy_question = ClarificationQuestion(
+        question_key="deployment_strategy_preference",
+        prompt="Pick one",
+        options=[],
+        rationale="test",
+    )
+    engine.record_answer(strategy_question, "unknown")
+    selection = engine.select_strategy(intent)
+
+    assert selection.strategy.value == "kubernetes"

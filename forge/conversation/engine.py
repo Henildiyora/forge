@@ -62,6 +62,7 @@ class ConversationEngine:
     """Structured conversation manager that turns user intent into a deployment decision."""
 
     MAX_QUESTIONS = 3
+    _UNSURE_MARKERS = {"unknown", "unsure", "not sure", "i dont know", "i don't know"}
 
     def __init__(self, llm: LLMClient, scan_result: CodebaseScanResult) -> None:
         self.llm = llm
@@ -93,6 +94,8 @@ class ConversationEngine:
         self.context.wants_local_only = any(
             marker in user_input.lower() for marker in ("local", "one machine", "docker compose")
         )
+        if any(marker in normalized_goal for marker in self._UNSURE_MARKERS):
+            self.intent.confidence = min(self.intent.confidence, 0.65)
         if self.intent.mentioned_cloud is not None:
             self.context.preferred_cloud = self.intent.mentioned_cloud
         return self.intent
@@ -120,7 +123,8 @@ class ConversationEngine:
                 question_key="deployment_strategy_preference",
                 prompt=(
                     "This project looks complex (multi-service), but your goal mentions Docker. "
-                    "Which strategy do you want FORGE to use?"
+                    "Pick Docker Compose for a simpler first deployment, or Kubernetes for "
+                    "stronger scaling and operations. Which should FORGE generate now?"
                 ),
                 options=[
                     ClarificationOption(
@@ -153,7 +157,7 @@ class ConversationEngine:
                     ),
                     ClarificationOption(
                         key="unsure",
-                        label="Not sure — let FORGE decide",
+                        label="Not sure — pick the safest default and explain why",
                         value="unknown",
                     ),
                 ],
@@ -181,7 +185,7 @@ class ConversationEngine:
                     ),
                     ClarificationOption(
                         key="unsure",
-                        label="Not sure — let FORGE decide from the code",
+                        label="Not sure — infer from code and recommend best practice",
                         value="unknown",
                     ),
                 ],
@@ -214,14 +218,25 @@ class ConversationEngine:
                 self.context.service_count_hint = 3
             elif normalized in {"large", "6+"}:
                 self.context.service_count_hint = 6
+            elif normalized in self._UNSURE_MARKERS:
+                # For unsure answers, use the scan result so strategy selection remains deterministic.
+                self.context.service_count_hint = self.scan.service_count
         if question.question_key == "cloud_provider":
             if normalized in {"aws", "gcp", "azure"}:
                 self.context.preferred_cloud = normalized
+            elif normalized in self._UNSURE_MARKERS:
+                self.context.preferred_cloud = "aws"
         if question.question_key == "deployment_strategy_preference":
             if normalized == "docker_compose":
                 self.context.forced_strategy = DeploymentStrategy.DOCKER_COMPOSE
             elif normalized == "kubernetes":
                 self.context.forced_strategy = DeploymentStrategy.KUBERNETES
+            elif normalized in self._UNSURE_MARKERS:
+                self.context.forced_strategy = (
+                    DeploymentStrategy.KUBERNETES
+                    if self.scan.service_count > 2
+                    else DeploymentStrategy.DOCKER_COMPOSE
+                )
 
     def select_strategy(self, intent: UserIntent) -> StrategySelectionResult:
         """Select a deployment strategy with deterministic Python logic only."""

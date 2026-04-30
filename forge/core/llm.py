@@ -449,11 +449,22 @@ def _heuristic_recommendation(prompt: str) -> dict[str, object]:
         strategy = "cicd_only"
     reasoning = (
         "FORGE recommends the "
-        f"{strategy} strategy based on the project scan and goal."
+        f"{strategy} strategy based on the project scan and goal. "
+        "This is the best starting point for now, and you can move to Kubernetes later "
+        "if traffic or service complexity grows. Watch for configuration drift between "
+        "local and production environments."
     )
     return {
         "reasoning": reasoning,
-        "requirements": ["Reviewed scan results", "Required runtime credentials if applicable"],
-        "what_will_be_generated": ["Deployment artifacts matched to the chosen strategy"],
+        "requirements": [
+            "Review the generated files before applying them to production",
+            "Set required runtime credentials and environment variables",
+            "Run local smoke tests before deploying",
+        ],
+        "what_will_be_generated": [
+            "Dockerfile and/or compose file when containerization is selected",
+            "Kubernetes manifests and CI workflow when Kubernetes is selected",
+            "Supplemental deployment files for the selected target",
+        ],
         "estimated_setup_time": "~10 minutes",
     }
