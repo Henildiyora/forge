@@ -100,6 +100,7 @@ def build(
     decision = run_async(engine.build_recommendation(selection.strategy, build_goal))
     typer.echo(f"FORGE recommends: {decision.strategy.value}")
     typer.echo(decision.reasoning)
+    _print_strategy_quick_guide()
     typer.echo(f"Estimated setup time: {decision.estimated_setup_time}")
     if decision.requirements:
         typer.echo(f"Requirements: {decision.requirements}")
@@ -162,10 +163,10 @@ def build(
     except SandboxToolingError as exc:
         typer.secho("Kubernetes sandbox validation cannot run on this machine.", fg="yellow")
         typer.echo(str(exc))
-        typer.echo(
-            "Next step: rerun `forge build`, choose Docker Compose, "
-            "or install vcluster and rerun."
-        )
+        typer.echo("Recommended next steps:")
+        typer.echo("  1) Install tooling: brew install loft-sh/tap/vcluster")
+        typer.echo("  2) Or rerun `forge build` and choose Docker Compose for a simpler path")
+        typer.echo("  3) Follow `.forge/generated/instruction_deploy.md` for exact commands")
         raise typer.Exit(code=1) from exc
     if sandbox_validation is not None:
         typer.echo(
@@ -208,3 +209,10 @@ def _print_next_steps(*, artifact_dir: Path, strategy: DeploymentStrategy) -> No
     else:
         typer.echo("  3) Review supplemental platform files in `.forge/generated`")
     typer.echo("  4) If anything is unclear, rerun `forge build --goal \"...\"` with more detail.")
+
+
+def _print_strategy_quick_guide() -> None:
+    typer.echo("Quick strategy guide:")
+    typer.echo("  - Docker Compose: best for learning, single-machine deploys, and faster setup")
+    typer.echo("  - Kubernetes: best for scaling, resilience, and multi-service operations")
+    typer.echo("  - Start simple, then migrate later when traffic and complexity increase")

@@ -86,6 +86,7 @@ def test_build_command_generates_serverless_artifacts(
 
     assert result.exit_code == 0
     assert "FORGE recommends: serverless" in result.stdout
+    assert "Quick strategy guide:" in result.stdout
     assert "Open the deployment guide" in result.stdout
     assert (output_dir / "serverless.yml").exists()
     assert (output_dir / "instruction_deploy.md").exists()
@@ -129,7 +130,42 @@ def test_build_command_shows_friendly_message_when_vcluster_is_missing(
     assert result.exit_code == 1
     assert "Kubernetes sandbox validation cannot run on this machine" in result.stdout
     assert "Install vcluster first" in result.stdout
-    assert "Next step: rerun `forge build`, choose Docker Compose" in result.stdout
+    assert "Recommended next steps:" in result.stdout
+    assert "Install tooling: brew install loft-sh/tap/vcluster" in result.stdout
+    assert "choose Docker Compose for a simpler path" in result.stdout
+    assert "Traceback" not in result.stdout
+
+
+def test_build_command_handles_uncertain_goal_without_traceback(
+    tmp_path: Path,
+    python_fastapi_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    output_dir = tmp_path / "artifacts"
+
+    async def _skip_sandbox(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        return None
+
+    monkeypatch.setattr("forge.cli.commands.build.validate_kubernetes_build", _skip_sandbox)
+    result = runner.invoke(
+        app,
+        [
+            "build",
+            str(python_fastapi_project),
+            "--goal",
+            "I don't know what to deploy yet, can you suggest the best option?",
+            "--output-dir",
+            str(output_dir),
+            "--auto-approve",
+        ],
+        input="1\n",
+    )
+
+    assert result.exit_code == 0
+    assert "FORGE recommends:" in result.stdout
+    assert "Quick strategy guide:" in result.stdout
     assert "Traceback" not in result.stdout
 
 

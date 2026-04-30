@@ -81,7 +81,7 @@ class HeuristicProvider:
                 confidence=0.84,
                 raw_text=json.dumps(data),
             )
-        if "clarificationquestion" in prompt or "clarification question" in lower_prompt:
+        if "clarificationquestion" in lower_prompt or "clarification question" in lower_prompt:
             data = _heuristic_question(lower_prompt)
             return LLMResponse(
                 data=data,
@@ -418,21 +418,58 @@ def _heuristic_question(prompt: str) -> dict[str, object]:
         return {
             "question_key": "service_count",
             "prompt": "How many separate services does this project have?",
+            "rationale": "Service count helps FORGE choose simple vs scalable deployment safely.",
             "options": [
-                "Just one (monolith or single API)",
-                "2-5 services (small microservices)",
-                "6+ services (full microservices platform)",
-                "Not sure — let FORGE decide from the code",
+                {
+                    "key": "one",
+                    "label": "Just one (monolith or single API)",
+                    "value": "1",
+                },
+                {
+                    "key": "small",
+                    "label": "2-5 services (small microservices)",
+                    "value": "3",
+                },
+                {
+                    "key": "large",
+                    "label": "6+ services (full microservices platform)",
+                    "value": "6",
+                },
+                {
+                    "key": "unsure",
+                    "label": "Not sure — recommend the best option for me",
+                    "value": "unknown",
+                },
             ],
         }
     return {
-        "question_key": "deployment_target",
-        "prompt": "Where do you expect this to run?",
+        "question_key": "deployment_strategy_preference",
+        "prompt": (
+            "If you are unsure, start with Docker Compose for faster setup, "
+            "or choose Kubernetes for stronger scaling. Which should FORGE generate?"
+        ),
+        "rationale": "Choosing a strategy first lets FORGE generate the right deployment files.",
         "options": [
-            "Just locally or on one machine",
-            "On Kubernetes",
-            "As a serverless app",
-            "Not sure — let FORGE decide",
+            {
+                "key": "docker_compose",
+                "label": "Docker Compose (simple, faster to start)",
+                "value": "docker_compose",
+            },
+            {
+                "key": "kubernetes",
+                "label": "Kubernetes (best for scale and resilience)",
+                "value": "kubernetes",
+            },
+            {
+                "key": "serverless",
+                "label": "Serverless (event-driven and minimal ops)",
+                "value": "serverless",
+            },
+            {
+                "key": "unsure",
+                "label": "Not sure — recommend the best option for me",
+                "value": "unknown",
+            },
         ],
     }
 

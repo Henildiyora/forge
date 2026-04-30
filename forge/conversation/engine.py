@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pydantic import ValidationError
 from pydantic import BaseModel, Field
 
 from forge.agents.librarian.ast_analyzer import CodebaseScanResult
@@ -201,7 +202,10 @@ class ConversationEngine:
                 agent="conversation_engine",
                 expected_format="json",
             )
-            question = ClarificationQuestion.model_validate(response.data)
+            try:
+                question = ClarificationQuestion.model_validate(response.data)
+            except ValidationError:
+                question = self._default_low_confidence_question()
         self.questions_asked += 1
         return question
 
@@ -255,6 +259,36 @@ class ConversationEngine:
         if mentions_kubernetes:
             return False
         return self._docker_goal_detected and self.scan.service_count > 1
+
+    def _default_low_confidence_question(self) -> ClarificationQuestion:
+        return ClarificationQuestion(
+            question_key="deployment_strategy_preference",
+            prompt=(
+                "If you are unsure, FORGE can start with Docker Compose for faster setup "
+                "or Kubernetes for stronger scaling. Which should FORGE generate?"
+            ),
+            options=[
+                ClarificationOption(
+                    key="docker_compose",
+                    label="Docker Compose (quick start, easier to run locally)",
+                    value="docker_compose",
+                ),
+                ClarificationOption(
+                    key="kubernetes",
+                    label="Kubernetes (best when you expect higher scale)",
+                    value="kubernetes",
+                ),
+                ClarificationOption(
+                    key="unsure",
+                    label="Not sure — recommend best practice for my project",
+                    value="unknown",
+                ),
+            ],
+            rationale=(
+                "A safe default question avoids interruptions and keeps the build flow "
+                "actionable when intent parsing is uncertain."
+            ),
+        )
 
     async def build_recommendation(
         self,

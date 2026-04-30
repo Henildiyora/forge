@@ -6,7 +6,7 @@ from forge.agents.librarian.ast_analyzer import CodebaseScanResult
 from forge.conversation.engine import ConversationEngine
 from forge.conversation.questions import ClarificationQuestion
 from forge.core.config import Settings
-from forge.core.llm import LLMClient
+from forge.core.llm import LLMClient, LLMResponse
 
 
 def _scan_result() -> CodebaseScanResult:
@@ -83,3 +83,34 @@ async def test_conversation_engine_uses_safe_defaults_for_unsure_answers() -> No
     selection = engine.select_strategy(intent)
 
     assert selection.strategy.value == "kubernetes"
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_goal_returns_schema_valid_clarification_question() -> None:
+    scan = _scan_result().model_copy(update={"service_count": 3})
+    engine = ConversationEngine(LLMClient(Settings(llm_backend="heuristic")), scan)
+
+    intent = await engine.interpret_intent("I don't know what to deploy yet, please suggest")
+    question = await engine.next_clarification_question(intent)
+
+    assert question.question_key == "deployment_strategy_preference"
+    assert question.rationale
+    assert len(question.options) >= 2
+
+
+@pytest.mark.asyncio
+async def test_conversation_engine_falls_back_on_malformed_clarification_payload() -> None:
+    scan = _scan_result().model_copy(update={"service_count": 3})
+    llm = LLMClient(Settings(llm_backend="heuristic"))
+    engine = ConversationEngine(llm, scan)
+    intent = await engine.interpret_intent("I don't know, suggest a deployment path")
+
+    async def _bad_complete(**kwargs: object) -> LLMResponse:
+        del kwargs
+        return LLMResponse(data={"summary": "bad-shape"}, evidence=["test"], confidence=0.9)
+
+    engine.llm.complete = _bad_complete  # type: ignore[method-assign]
+    question = await engine.next_clarification_question(intent)
+
+    assert question.question_key == "deployment_strategy_preference"
+    assert any(option.value == "unknown" for option in question.options)
