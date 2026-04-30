@@ -58,6 +58,27 @@ forge build /absolute/path/to/project --goal "Deploy this API to Kubernetes" --a
 6. When the strategy is Kubernetes, runs the SandboxTester against a vcluster.
 7. With `--live`, requests an approval and pauses until granted.
 
+### Docker intent vs Kubernetes complexity
+
+For multi-service repositories, FORGE may detect Kubernetes pressure from the
+scan (`service_count > 1`). If your goal text clearly asks for Docker
+(`docker`, `dockerhub`, `containerize`), FORGE now asks you to choose
+explicitly:
+
+- **Docker Compose (simple, Docker-first)**
+- **Kubernetes (scalable, cluster-first)**
+
+Your answer is treated as an explicit strategy override.
+
+### Kubernetes sandbox prerequisite
+
+Kubernetes artifact validation requires `vcluster` locally. If `vcluster` is
+missing, FORGE exits with a friendly actionable message instead of a Python
+traceback, and suggests either:
+
+1. install `vcluster` (`brew install loft-sh/tap/vcluster`), or
+2. rerun and choose Docker Compose if your goal is Dockerfile/Docker Hub only.
+
 ## Monitor and incident
 
 ```bash

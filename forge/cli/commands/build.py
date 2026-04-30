@@ -17,6 +17,7 @@ from forge.core.builds import (
     write_generated_artifacts,
 )
 from forge.core.checkpoints import CheckpointStore
+from forge.core.exceptions import SandboxToolingError
 from forge.core.llm import LLMClient
 from forge.core.strategies import DeploymentStrategy
 from forge.core.workspace import ConnectionProfile, ConversationSession, ForgeWorkspace
@@ -148,14 +149,23 @@ def build(
         detail={"strategy": decision.strategy.value, "files": written},
     )
 
-    sandbox_validation = run_async(
-        validate_kubernetes_build(
-            settings=effective_settings,
-            project_path=resolved_project_path,
-            generated=generated,
-            message_bus=bus,
+    try:
+        sandbox_validation = run_async(
+            validate_kubernetes_build(
+                settings=effective_settings,
+                project_path=resolved_project_path,
+                generated=generated,
+                message_bus=bus,
+            )
         )
-    )
+    except SandboxToolingError as exc:
+        typer.secho("Kubernetes sandbox validation cannot run on this machine.", fg="yellow")
+        typer.echo(str(exc))
+        typer.echo(
+            "Next step: rerun `forge build`, choose Docker Compose, "
+            "or install vcluster and rerun."
+        )
+        raise typer.Exit(code=1) from exc
     if sandbox_validation is not None:
         typer.echo(
             f"Sandbox validation: {'passed' if sandbox_validation.smoke_test.passed else 'failed'}"

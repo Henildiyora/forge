@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from forge.cli.main import app
 from forge.core.approvals import approval_store
+from forge.core.exceptions import SandboxToolingError
 
 
 def test_status_command() -> None:
@@ -79,6 +81,7 @@ def test_build_command_generates_serverless_artifacts(
             str(output_dir),
             "--auto-approve",
         ],
+        input="1\n",
     )
 
     assert result.exit_code == 0
@@ -88,6 +91,44 @@ def test_build_command_generates_serverless_artifacts(
     assert session_path.exists()
     session_payload = json.loads(session_path.read_text(encoding="utf-8"))
     assert session_payload["strategy"] == "serverless"
+
+
+def test_build_command_shows_friendly_message_when_vcluster_is_missing(
+    tmp_path: Path,
+    python_fastapi_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    output_dir = tmp_path / "artifacts"
+
+    async def _raise_sandbox_error(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise SandboxToolingError(
+            "vcluster binary not found at /usr/local/bin/vcluster. "
+            "Install vcluster first (macOS: `brew install loft-sh/tap/vcluster`) "
+            "or choose the Docker Compose strategy if you only need Docker artifacts."
+        )
+
+    monkeypatch.setattr("forge.cli.commands.build.validate_kubernetes_build", _raise_sandbox_error)
+    result = runner.invoke(
+        app,
+        [
+            "build",
+            str(python_fastapi_project),
+            "--goal",
+            "Deploy this service to Kubernetes",
+            "--output-dir",
+            str(output_dir),
+            "--auto-approve",
+        ],
+        input="1\n",
+    )
+
+    assert result.exit_code == 1
+    assert "Kubernetes sandbox validation cannot run on this machine" in result.stdout
+    assert "Install vcluster first" in result.stdout
+    assert "Next step: rerun `forge build`, choose Docker Compose" in result.stdout
+    assert "Traceback" not in result.stdout
 
 
 def test_monitor_command_can_escalate_to_incident_workflow() -> None:

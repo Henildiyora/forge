@@ -17,10 +17,12 @@ from forge.agents.librarian.ast_analyzer import CodebaseScanResult
 from forge.agents.platform_specialist.generators import generate_existing_platform_overlay
 from forge.agents.remediation.rollback_controller import RollbackController, RollbackResult
 from forge.agents.sandbox_tester.agent import SandboxTesterAgent, SandboxValidationResult
+from forge.agents.sandbox_tester.vcluster_client import VClusterCommandError
 from forge.agents.serverless_specialist.generators import generate_serverless_assets
 from forge.core.approvals import ApprovalRequest, approval_store
 from forge.core.checkpoints import CheckpointRecord, CheckpointStore
 from forge.core.config import Settings
+from forge.core.exceptions import SandboxToolingError
 from forge.core.message_bus import MessageBus
 from forge.core.strategies import DeploymentStrategy
 from forge.core.workspace import ArtifactManifest, ForgeWorkspace
@@ -202,12 +204,15 @@ async def validate_kubernetes_build(
         str(Path(project_path).expanduser().resolve())
     )
     sandbox = SandboxTesterAgent(settings=settings, message_bus=message_bus)
-    return await sandbox.validate_sandbox(
-        task_id=generated.task_id,
-        manifests=generated.k8s_manifests,
-        namespace=settings.k8s_namespace,
-        expected_port=scan_result.port,
-    )
+    try:
+        return await sandbox.validate_sandbox(
+            task_id=generated.task_id,
+            manifests=generated.k8s_manifests,
+            namespace=settings.k8s_namespace,
+            expected_port=scan_result.port,
+        )
+    except VClusterCommandError as exc:
+        raise SandboxToolingError(str(exc)) from exc
 
 
 async def request_build_approval(

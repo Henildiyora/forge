@@ -1,12 +1,12 @@
 {
   "task_id": "build-session-python_fastapi",
-  "goal": "Deploy this FastAPI app to aws lambda with a simple serverless setup",
-  "strategy": "serverless",
-  "questions_asked": 0,
+  "goal": "Deploy this service to Kubernetes",
+  "strategy": "docker_compose",
+  "questions_asked": 1,
   "last_question": null,
   "decision_payload": {
-    "strategy": "serverless",
-    "reasoning": "FORGE recommends the serverless strategy based on the project scan and goal.",
+    "strategy": "docker_compose",
+    "reasoning": "FORGE recommends the docker_compose strategy based on the project scan and goal.",
     "requirements": [
       "Reviewed scan results",
       "Required runtime credentials if applicable"

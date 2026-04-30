@@ -1,7 +1,8 @@
 {
-  "task_id": "build-d25b0217",
-  "strategy": "serverless",
+  "task_id": "build-0b08fb38",
+  "strategy": "docker_compose",
   "files": [
-    "serverless.yml"
+    "Dockerfile",
+    "docker-compose.generated.yml"
   ]
 }

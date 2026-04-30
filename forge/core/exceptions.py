@@ -23,3 +23,7 @@ class SecretNotFoundError(SwarmError):
 
 class InsufficientEvidenceError(SwarmError):
     """Raised when an LLM response lacks the evidence required by policy."""
+
+
+class SandboxToolingError(SwarmError):
+    """Raised when local sandbox tooling (e.g., vcluster) is missing or unusable."""

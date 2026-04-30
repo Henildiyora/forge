@@ -89,12 +89,17 @@ Read the full contract in [`docs/trust.md`](docs/trust.md).
 ## Optional integrations
 
 - **Kubernetes** — `forge build --live` after a sandbox + approval cycle.
+  Local Kubernetes validation uses `vcluster`; install with
+  `brew install loft-sh/tap/vcluster` on macOS.
 - **Slack approvals** — set `SLACK_SIGNING_SECRET` and FORGE posts approval
   buttons that resume your workflow when a human clicks.
 - **Cloud read-only inspection** — `forge connect --cloud-provider aws`
   fetches cost and posture data; never writes.
 - **Existing CI/CD** — generators emit GitHub Actions / GitLab CI YAML you
   can drop into your repo as a starting point.
+
+If your goal is just Docker/Docker Hub, FORGE asks you to choose between
+Docker Compose and Kubernetes when project complexity signals conflict.
 
 ## Configuration
 

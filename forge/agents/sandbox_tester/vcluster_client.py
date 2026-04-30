@@ -36,12 +36,20 @@ class SubprocessVClusterRunner:
         self.binary_path = binary_path
 
     async def run(self, args: list[str]) -> CommandResult:
-        process = await asyncio.create_subprocess_exec(
-            self.binary_path,
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                self.binary_path,
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise VClusterCommandError(
+                "vcluster binary not found at "
+                f"{self.binary_path}. Install vcluster first (macOS: "
+                "`brew install loft-sh/tap/vcluster`) or choose the Docker "
+                "Compose strategy if you only need Docker artifacts."
+            ) from exc
         stdout_bytes, stderr_bytes = await process.communicate()
         return CommandResult(
             stdout=stdout_bytes.decode("utf-8"),

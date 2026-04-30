@@ -25,6 +25,10 @@ class StrategySelectionContext(BaseModel):
         default=False,
         description="Whether the user only wants a CI/CD pipeline.",
     )
+    forced_strategy: DeploymentStrategy | None = Field(
+        default=None,
+        description="User-selected strategy override captured during clarification.",
+    )
 
 
 class StrategySelectionResult(BaseModel):
@@ -42,6 +46,11 @@ def select_strategy(
     """Select exactly one deployment strategy without calling an LLM."""
 
     selection = context or StrategySelectionContext()
+    if selection.forced_strategy is not None:
+        return StrategySelectionResult(
+            strategy=selection.forced_strategy,
+            reason="User explicitly chose this deployment strategy during clarification.",
+        )
     effective_service_count = selection.service_count_hint or scan_result.service_count
     mentioned_tools = {tool.lower() for tool in intent.mentioned_tools}
 

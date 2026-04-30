@@ -69,6 +69,7 @@ class ConversationEngine:
         self.intent: UserIntent | None = None
         self.questions_asked = 0
         self.context = StrategySelectionContext()
+        self._docker_goal_detected = False
 
     async def interpret_intent(self, user_input: str) -> UserIntent:
         """Use the configured LLM backend to extract structured intent."""
@@ -80,6 +81,11 @@ class ConversationEngine:
             expected_format="json",
         )
         self.intent = UserIntent.model_validate(response.data)
+        normalized_goal = user_input.lower()
+        self._docker_goal_detected = any(
+            marker in normalized_goal
+            for marker in ("docker", "dockerhub", "containerize", "container")
+        )
         self.context.wants_cicd_only = any(
             marker in user_input.lower()
             for marker in ("pipeline only", "ci/cd only", "just ci", "just pipeline")
@@ -96,6 +102,8 @@ class ConversationEngine:
 
         if self.questions_asked >= self.MAX_QUESTIONS:
             return False
+        if self._needs_strategy_conflict_question(intent):
+            return True
         if intent.confidence < 0.75:
             return True
         if intent.mentioned_cloud is None and "serverless" in intent.mentioned_tools:
@@ -107,7 +115,31 @@ class ConversationEngine:
     async def next_clarification_question(self, intent: UserIntent) -> ClarificationQuestion:
         """Return the most important remaining clarification question."""
 
-        if intent.mentioned_cloud is None and "serverless" in intent.mentioned_tools:
+        if self._needs_strategy_conflict_question(intent):
+            question = ClarificationQuestion(
+                question_key="deployment_strategy_preference",
+                prompt=(
+                    "This project looks complex (multi-service), but your goal mentions Docker. "
+                    "Which strategy do you want FORGE to use?"
+                ),
+                options=[
+                    ClarificationOption(
+                        key="docker_compose",
+                        label="Docker Compose (simple, Docker/Docker Hub focused)",
+                        value="docker_compose",
+                    ),
+                    ClarificationOption(
+                        key="kubernetes",
+                        label="Kubernetes (scalable, cluster-focused)",
+                        value="kubernetes",
+                    ),
+                ],
+                rationale=(
+                    "Multi-service projects default toward Kubernetes, but FORGE should honor "
+                    "explicit Docker-first intent when that is your goal."
+                ),
+            )
+        elif intent.mentioned_cloud is None and "serverless" in intent.mentioned_tools:
             question = ClarificationQuestion(
                 question_key="cloud_provider",
                 prompt="Which cloud should FORGE target for this serverless deployment?",
@@ -185,6 +217,11 @@ class ConversationEngine:
         if question.question_key == "cloud_provider":
             if normalized in {"aws", "gcp", "azure"}:
                 self.context.preferred_cloud = normalized
+        if question.question_key == "deployment_strategy_preference":
+            if normalized == "docker_compose":
+                self.context.forced_strategy = DeploymentStrategy.DOCKER_COMPOSE
+            elif normalized == "kubernetes":
+                self.context.forced_strategy = DeploymentStrategy.KUBERNETES
 
     def select_strategy(self, intent: UserIntent) -> StrategySelectionResult:
         """Select a deployment strategy with deterministic Python logic only."""
@@ -193,6 +230,16 @@ class ConversationEngine:
         if self.context.preferred_cloud is not None:
             intent_like.mentioned_cloud = self.context.preferred_cloud
         return select_strategy(self.scan, intent_like, self.context)
+
+    def _needs_strategy_conflict_question(self, intent: UserIntent) -> bool:
+        if self.context.forced_strategy is not None:
+            return False
+        mentions_kubernetes = any(
+            tool.lower() in {"kubernetes", "k8s"} for tool in intent.mentioned_tools
+        )
+        if mentions_kubernetes:
+            return False
+        return self._docker_goal_detected and self.scan.service_count > 1
 
     async def build_recommendation(
         self,

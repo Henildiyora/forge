@@ -49,3 +49,18 @@ async def test_conversation_engine_builds_a_confirmable_decision() -> None:
 
     assert decision.strategy.value == "kubernetes"
     assert "FORGE recommends" in decision.reasoning
+
+
+@pytest.mark.asyncio
+async def test_conversation_engine_asks_docker_vs_k8s_on_conflicting_signals() -> None:
+    scan = _scan_result().model_copy(update={"service_count": 7})
+    engine = ConversationEngine(LLMClient(Settings(llm_backend="heuristic")), scan)
+
+    intent = await engine.interpret_intent("I just need a Dockerfile for Docker Hub")
+
+    assert engine.needs_clarification(intent) is True
+    question = await engine.next_clarification_question(intent)
+    assert question.question_key == "deployment_strategy_preference"
+    engine.record_answer(question, "docker_compose")
+    selection = engine.select_strategy(intent)
+    assert selection.strategy.value == "docker_compose"
