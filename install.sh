@@ -49,8 +49,17 @@ green "✓ forge installed"
 
 if ! command -v forge >/dev/null 2>&1; then
   yellow "forge is installed but not on your PATH yet."
-  echo "Run this once to auto-configure PATH:"
-  echo "  pipx ensurepath"
+  echo "What this does: 'pipx ensurepath' prints shell snippets so ~/.local/bin is on PATH."
+  if [ -t 0 ] && command -v pipx >/dev/null 2>&1; then
+    read -r -p "Run 'pipx ensurepath' now (updates user PATH guidance)? [y/N] " consent
+    if [[ "${consent}" =~ ^[Yy]$ ]]; then
+      pipx ensurepath || true
+      export PATH="$HOME/.local/bin:$PATH"
+    fi
+  else
+    echo "Run this once to auto-configure PATH:"
+    echo "  pipx ensurepath"
+  fi
   echo
   echo "Then restart your shell."
   echo "If it still fails, add this to your shell rc manually:"
@@ -58,7 +67,7 @@ if ! command -v forge >/dev/null 2>&1; then
   echo
   echo "Quick verify after restart:"
   echo "  which forge"
-  echo "  forge doctor --quick"
+  echo "  forge doctor --post-install"
   exit 0
 fi
 

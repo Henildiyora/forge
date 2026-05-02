@@ -72,6 +72,7 @@ class ConversationEngine:
         self.questions_asked = 0
         self.context = StrategySelectionContext()
         self._docker_goal_detected = False
+        self._goal_had_unsure_markers = False
 
     async def interpret_intent(self, user_input: str) -> UserIntent:
         """Use the configured LLM backend to extract structured intent."""
@@ -97,6 +98,7 @@ class ConversationEngine:
         )
         if any(marker in normalized_goal for marker in self._UNSURE_MARKERS):
             self.intent.confidence = min(self.intent.confidence, 0.65)
+            self._goal_had_unsure_markers = True
         if self.intent.mentioned_cloud is not None:
             self.context.preferred_cloud = self.intent.mentioned_cloud
         return self.intent
@@ -241,6 +243,9 @@ class ConversationEngine:
                     if self.scan.service_count > 2
                     else DeploymentStrategy.DOCKER_COMPOSE
                 )
+        # One clarification is enough when the user already said they were unsure in the goal.
+        if self._goal_had_unsure_markers and self.intent is not None:
+            self.intent.confidence = max(self.intent.confidence, 0.78)
 
     def select_strategy(self, intent: UserIntent) -> StrategySelectionResult:
         """Select a deployment strategy with deterministic Python logic only."""

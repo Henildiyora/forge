@@ -97,6 +97,14 @@ class HeuristicProvider:
                 confidence=0.88,
                 raw_text=json.dumps(data),
             )
+        if "forge_manager_answer_json" in lower_prompt:
+            answer = _heuristic_manager_answer_json(prompt)
+            return LLMResponse(
+                data={"answer": answer, "references": [".forge/index.json", "instruction_deploy.md"]},
+                evidence=["Heuristic Manager answer for forge ask/chat."],
+                confidence=0.82,
+                raw_text=json.dumps({"answer": answer}),
+            )
         return LLMResponse(
             data={"summary": "Heuristic fallback response."},
             evidence=["Heuristic fallback handled the prompt."],
@@ -414,7 +422,13 @@ def _heuristic_intent(goal: str) -> dict[str, object]:
 
 
 def _heuristic_question(prompt: str) -> dict[str, object]:
-    if "service" in prompt:
+    lower = prompt.lower()
+    # Clarification prompts embed SCAN_RESULT JSON which always mentions "service"
+    # (e.g. service_count). Route on the explicit missing-intent hint first.
+    if "low confidence in user intent" in lower:
+        return _heuristic_deployment_strategy_question()
+
+    if "service" in lower:
         return {
             "question_key": "service_count",
             "prompt": "How many separate services does this project have?",
@@ -442,6 +456,10 @@ def _heuristic_question(prompt: str) -> dict[str, object]:
                 },
             ],
         }
+    return _heuristic_deployment_strategy_question()
+
+
+def _heuristic_deployment_strategy_question() -> dict[str, object]:
     return {
         "question_key": "deployment_strategy_preference",
         "prompt": (
@@ -472,6 +490,40 @@ def _heuristic_question(prompt: str) -> dict[str, object]:
             },
         ],
     }
+
+
+def _heuristic_manager_answer_json(prompt: str) -> str:
+    """Short beginner-friendly answers when the Manager runs in heuristic mode."""
+
+    block = prompt
+    if "QUESTION:" in prompt:
+        block = prompt.split("QUESTION:", maxsplit=1)[-1]
+    elif "USER:" in prompt:
+        block = prompt.split("USER:", maxsplit=1)[-1]
+    q = block.strip().lower()
+    if "docker" in q and ("daemon" in q or "sock" in q):
+        return (
+            "Docker is not running or your shell cannot reach it. On macOS, open Docker Desktop "
+            "and wait until it says Running, then retry. Verify with `docker info`."
+        )
+    if "strategy" in q or "why" in q or "recommend" in q:
+        return (
+            "FORGE ranked strategies from your scan (language, port, service count) and your "
+            "goal. Docker Compose is the gentlest start on one machine; Kubernetes fits "
+            "multi-service production clusters. Open `.forge/generated/instruction_deploy.md` "
+            "for copy-paste commands with placeholders like <your_image_name>."
+        )
+    if "vcluster" in q or "sandbox" in q:
+        return (
+            "Kubernetes sandbox checks need the `vcluster` CLI. Install it (macOS: "
+            "`brew install loft-sh/tap/vcluster`) or pick Docker Compose in `forge build` "
+            "if you only need container files."
+        )
+    return (
+        "This is the offline Manager: keep questions about deployment files, Docker, or "
+        "Kubernetes. For richer answers, run `forge setup` with a local LLM, or paste the "
+        "relevant part of `instruction_deploy.md`."
+    )
 
 
 def _heuristic_recommendation(prompt: str) -> dict[str, object]:

@@ -20,8 +20,19 @@ If `forge` is not found after install, run:
 pipx ensurepath
 exec $SHELL -l
 which forge
-forge doctor --quick
+forge doctor --post-install
 ```
+
+### Optional: Homebrew (macOS)
+
+If you maintain a tap, you can install from HEAD:
+
+```bash
+brew tap henildiyora/forge https://github.com/Henildiyora/forge.git
+brew install --HEAD forge
+```
+
+The `curl | bash` + `pipx` path remains the default until stable PyPI releases ship.
 
 ## Quick start
 
@@ -31,9 +42,12 @@ forge index
 forge build
 ```
 
-That's it. FORGE scans the project, asks one or two clarifying questions if it
-needs them, picks a deployment strategy, and writes the artifacts into
-`.forge/generated/`. Heuristic backend by default — works fully offline.
+That's it. FORGE scans the project, shows a **project preview**, proposes **ranked
+deployment strategies**, runs specialist agents through the **Manager + Captain**
+review path for Docker / Kubernetes / CI-only flows, and writes artifacts into
+`.forge/generated/` plus a detailed `instruction_deploy.md`. Use **`forge ask`**
+or **`forge chat`** to talk to the Manager about what was generated. Heuristic
+backend by default — works fully offline.
 
 > **30-second demo:** [`docs/demo.cast`](docs/demo.cast) (record locally with
 > `scripts/record-demo.sh`, then upload to asciinema or embed as SVG).
@@ -53,7 +67,10 @@ forge build --goal "deploy this as a serverless function on AWS"
 | Command | Purpose |
 |---------|---------|
 | `forge index` | Scan the project, save `.forge/index.json`. |
-| `forge build` | Conversation → strategy → generate artifacts → sandbox validate. |
+| `forge build` | Preview → ranked strategies → Manager + specialists + Captain → artifacts. |
+| `forge ask` | Ask the Manager a question about your project or last build. |
+| `forge chat` | Multi-turn REPL with the Manager (`/exit`, `/explain <file>`). |
+| `forge explain` | Plain-English explanation of a file under `.forge/generated/`. |
 | `forge monitor` | Run a Watchman snapshot or escalate to incident workflow. |
 | `forge setup` | Pick the best LLM backend for your machine. |
 | `forge doctor` | Health-check Python, Ollama, kubectl, Slack, Redis. |
@@ -65,10 +82,9 @@ forge build --goal "deploy this as a serverless function on AWS"
 ```mermaid
 flowchart LR
     A[Codebase] --> B[Librarian scan]
-    B --> C[Conversation]
-    C --> D[Strategy selector]
-    D --> E[Specialist agents]
-    E --> F[Sandbox validate]
+    B --> C[Manager preview plus ranked strategies]
+    C --> D[Specialist agents plus Captain]
+    D --> F[Sandbox validate]
     F -->|Ready| G[Approval gate]
     G -->|Approved| H[Live deploy]
     H --> I[Watchman]

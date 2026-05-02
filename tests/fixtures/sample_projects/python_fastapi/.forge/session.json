@@ -1,18 +1,21 @@
 {
   "task_id": "build-session-python_fastapi",
-  "goal": "Deploy this service to Kubernetes",
+  "goal": "I don't know what to deploy yet, can you suggest the best option?",
   "strategy": "docker_compose",
   "questions_asked": 1,
   "last_question": null,
   "decision_payload": {
     "strategy": "docker_compose",
-    "reasoning": "FORGE recommends the docker_compose strategy based on the project scan and goal.",
+    "reasoning": "FORGE recommends the docker_compose strategy based on the project scan and goal. This is the best starting point for now, and you can move to Kubernetes later if traffic or service complexity grows. Watch for configuration drift between local and production environments.",
     "requirements": [
-      "Reviewed scan results",
-      "Required runtime credentials if applicable"
+      "Review the generated files before applying them to production",
+      "Set required runtime credentials and environment variables",
+      "Run local smoke tests before deploying"
     ],
     "what_will_be_generated": [
-      "Deployment artifacts matched to the chosen strategy"
+      "Dockerfile and/or compose file when containerization is selected",
+      "Kubernetes manifests and CI workflow when Kubernetes is selected",
+      "Supplemental deployment files for the selected target"
     ],
     "estimated_setup_time": "~10 minutes",
     "user_confirmed": true

@@ -9,6 +9,7 @@ from forge.agents.base import BaseAgent
 from forge.core.config import Settings
 from forge.core.events import EventType, SwarmEvent
 from forge.core.message_bus import MessageBus
+from forge.core.strategies import DeploymentStrategy
 from forge.orchestrator.state import SwarmState
 
 CaptainNextAction = Literal["retry_generation", "complete", "halt"]
@@ -63,7 +64,8 @@ class CaptainAgent(BaseAgent):
     def review_deployment_state(self, state: SwarmState) -> CaptainDecision:
         """Review deploy workflow state and choose the next action."""
 
-        config_agents = ("docker_specialist", "k8s_specialist", "cicd_specialist")
+        forge_strategy = _forge_strategy_from_metadata(state)
+        config_agents = _config_agents_for_strategy(forge_strategy)
         config_attempts = state.step_iterations.get("config_generation", 0)
         failed_agents = [
             agent_name
@@ -88,13 +90,7 @@ class CaptainAgent(BaseAgent):
                 ],
             )
 
-        missing_artifacts: list[str] = []
-        if state.dockerfile is None:
-            missing_artifacts.append("dockerfile")
-        if not state.k8s_manifests:
-            missing_artifacts.append("k8s_manifests")
-        if state.cicd_pipeline is None:
-            missing_artifacts.append("cicd_pipeline")
+        missing_artifacts = _missing_artifacts_for_strategy(state, forge_strategy)
         if missing_artifacts:
             if config_attempts < state.max_iterations:
                 return CaptainDecision(
@@ -115,7 +111,7 @@ class CaptainAgent(BaseAgent):
                 ],
             )
 
-        alignment_issues = self._deployment_alignment_issues(state)
+        alignment_issues = self._deployment_alignment_issues(state, forge_strategy=forge_strategy)
         if alignment_issues:
             if config_attempts < state.max_iterations:
                 return CaptainDecision(
@@ -134,7 +130,7 @@ class CaptainAgent(BaseAgent):
         confidences = [
             state.agent_results[agent_name].confidence
             for agent_name in config_agents
-            if agent_name in state.agent_results
+            if agent_name in state.agent_results and state.agent_results[agent_name].success
         ]
         minimum_confidence = min(confidences) if confidences else 0.0
         if minimum_confidence < 0.7:
@@ -308,8 +304,16 @@ class CaptainAgent(BaseAgent):
         status["capabilities"] = ["deploy_review", "workflow_routing", "artifact_reconciliation"]
         return status
 
-    def _deployment_alignment_issues(self, state: SwarmState) -> list[str]:
+    def _deployment_alignment_issues(
+        self,
+        state: SwarmState,
+        *,
+        forge_strategy: DeploymentStrategy | None = None,
+    ) -> list[str]:
         issues: list[str] = []
+        if forge_strategy == DeploymentStrategy.CICD_ONLY:
+            return issues
+
         expected_port = state.project_metadata.get("port")
         if isinstance(expected_port, int):
             docker_port = _extract_docker_port(state.dockerfile)
@@ -326,36 +330,94 @@ class CaptainAgent(BaseAgent):
                     f"{expected_port}."
                 )
 
-            for manifest_name, manifest in state.k8s_manifests.items():
-                manifest_port = _extract_manifest_port(manifest)
-                if manifest_port is not None and manifest_port != expected_port:
-                    issues.append(
-                        f"{manifest_name} references port {manifest_port}, but the scan detected "
-                        f"port {expected_port}."
-                    )
+            if forge_strategy != DeploymentStrategy.DOCKER_COMPOSE:
+                for manifest_name, manifest in state.k8s_manifests.items():
+                    manifest_port = _extract_manifest_port(manifest)
+                    if manifest_port is not None and manifest_port != expected_port:
+                        issues.append(
+                            f"{manifest_name} references port {manifest_port}, but the scan "
+                            f"detected port {expected_port}."
+                        )
 
         env_vars = state.project_metadata.get("env_vars")
         if isinstance(env_vars, list):
             expected_env_vars = [env_var for env_var in env_vars if isinstance(env_var, str)]
             compose_text = state.docker_compose or ""
-            manifest_text = "\n".join(state.k8s_manifests.values())
             missing_in_compose = [
                 env_var for env_var in expected_env_vars if env_var not in compose_text
             ]
-            if missing_in_compose:
+            if missing_in_compose and forge_strategy in (
+                None,
+                DeploymentStrategy.DOCKER_COMPOSE,
+                DeploymentStrategy.KUBERNETES,
+            ):
                 issues.append(
                     "docker-compose is missing environment variables required by the scan: "
                     f"{', '.join(missing_in_compose)}."
                 )
-            missing_in_manifests = [
-                env_var for env_var in expected_env_vars if env_var not in manifest_text
-            ]
-            if missing_in_manifests:
-                issues.append(
-                    "Kubernetes manifests are missing environment variables required by the "
-                    f"scan: {', '.join(missing_in_manifests)}."
-                )
+            if forge_strategy not in (DeploymentStrategy.DOCKER_COMPOSE, DeploymentStrategy.CICD_ONLY):
+                manifest_text = "\n".join(state.k8s_manifests.values())
+                missing_in_manifests = [
+                    env_var for env_var in expected_env_vars if env_var not in manifest_text
+                ]
+                if missing_in_manifests:
+                    issues.append(
+                        "Kubernetes manifests are missing environment variables required by the "
+                        f"scan: {', '.join(missing_in_manifests)}."
+                    )
         return issues
+
+
+def _forge_strategy_from_metadata(state: SwarmState) -> DeploymentStrategy | None:
+    raw = state.project_metadata.get("forge_strategy")
+    if raw is None:
+        return None
+    try:
+        return DeploymentStrategy(str(raw))
+    except ValueError:
+        return None
+
+
+def _config_agents_for_strategy(strategy: DeploymentStrategy | None) -> tuple[str, ...]:
+    """Agents whose results Captain must validate for the selected build strategy."""
+
+    if strategy is None:
+        return ("docker_specialist", "k8s_specialist", "cicd_specialist")
+    if strategy == DeploymentStrategy.DOCKER_COMPOSE:
+        return ("docker_specialist",)
+    if strategy == DeploymentStrategy.CICD_ONLY:
+        return ("cicd_specialist",)
+    if strategy == DeploymentStrategy.KUBERNETES:
+        return ("docker_specialist", "k8s_specialist", "cicd_specialist")
+    return ("docker_specialist", "k8s_specialist", "cicd_specialist")
+
+
+def _missing_artifacts_for_strategy(
+    state: SwarmState,
+    strategy: DeploymentStrategy | None,
+) -> list[str]:
+    missing: list[str] = []
+    if strategy is None or strategy == DeploymentStrategy.KUBERNETES:
+        if state.dockerfile is None:
+            missing.append("dockerfile")
+        if not state.k8s_manifests:
+            missing.append("k8s_manifests")
+        if state.cicd_pipeline is None:
+            missing.append("cicd_pipeline")
+    elif strategy == DeploymentStrategy.DOCKER_COMPOSE:
+        if state.dockerfile is None:
+            missing.append("dockerfile")
+    elif strategy == DeploymentStrategy.CICD_ONLY:
+        if state.cicd_pipeline is None:
+            missing.append("cicd_pipeline")
+    else:
+        if state.dockerfile is None:
+            missing.append("dockerfile")
+        if not state.k8s_manifests:
+            missing.append("k8s_manifests")
+        if state.cicd_pipeline is None:
+            missing.append("cicd_pipeline")
+    return missing
 
 
 def _extract_docker_port(dockerfile: str | None) -> int | None:

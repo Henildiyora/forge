@@ -3,9 +3,12 @@ from __future__ import annotations
 import typer
 
 from forge.cli.commands.approvals import grant_approval, list_approvals, reject_approval
+from forge.cli.commands.ask import ask
 from forge.cli.commands.audit import audit
 from forge.cli.commands.build import build
+from forge.cli.commands.chat import chat
 from forge.cli.commands.connect import connect
+from forge.cli.commands.explain import explain
 from forge.cli.commands.doctor import doctor
 from forge.cli.commands.index import index
 from forge.cli.commands.monitor import monitor
@@ -20,6 +23,9 @@ app.command("doctor")(doctor)
 app.command("connect")(connect)
 app.command("index")(index)
 app.command("build")(build)
+app.command("ask")(ask)
+app.command("chat")(chat)
+app.command("explain")(explain)
 app.command("monitor")(monitor)
 app.command("status")(status)
 app.command("audit")(audit)

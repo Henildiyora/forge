@@ -6,11 +6,20 @@ from typing import Annotated
 import typer
 
 from forge.agents.librarian.agent import LibrarianAgent
+from forge.agents.manager.agent import ManagerAgent
+from forge.agents.manager.orchestrator import run_manager_build_pipeline
 from forge.cli.runtime import cli_settings, local_message_bus, run_async
 from forge.conversation.engine import ConversationEngine
+from forge.conversation.strategy_ranking import (
+    ScoredStrategy,
+    rank_strategies,
+    resolve_strategy_choice,
+)
+from forge.conversation.strategy_selector import UserIntentLike
 from forge.core import audit
 from forge.core.builds import (
     generate_strategy_artifacts,
+    generated_artifacts_from_swarm_state,
     index_project,
     request_build_approval,
     validate_kubernetes_build,
@@ -21,6 +30,14 @@ from forge.core.exceptions import SandboxToolingError
 from forge.core.llm import LLMClient
 from forge.core.strategies import DeploymentStrategy
 from forge.core.workspace import ConnectionProfile, ConversationSession, ForgeWorkspace
+
+_MANAGER_PIPELINED = frozenset(
+    {
+        DeploymentStrategy.DOCKER_COMPOSE,
+        DeploymentStrategy.KUBERNETES,
+        DeploymentStrategy.CICD_ONLY,
+    }
+)
 
 
 def build(
@@ -48,7 +65,7 @@ def build(
         ),
     ] = False,
 ) -> None:
-    """Run the FORGE conversation flow, generate artifacts, and validate when possible."""
+    """Run the Manager-led build flow, generate artifacts, and validate when possible."""
 
     resolved_project_path = project_path or Path.cwd()
     settings = cli_settings()
@@ -96,8 +113,35 @@ def build(
         if question.question_key == "service_count" and normalized.isdigit():
             intent.mentioned_scale = "medium" if int(normalized) > 1 else "small"
 
-    selection = engine.select_strategy(intent)
-    decision = run_async(engine.build_recommendation(selection.strategy, build_goal))
+    manager = ManagerAgent(settings=effective_settings, message_bus=bus)
+    typer.echo(manager.format_project_preview(scan_result))
+    if not auto_approve:
+        if not typer.confirm("Does this project summary look correct?", default=True):
+            typer.echo("Update the project or run `forge index` again, then rerun `forge build`.")
+            raise typer.Exit(1)
+
+    intent_like = UserIntentLike.model_validate(intent.model_dump(mode="json"))
+    ranked = rank_strategies(
+        scan_result,
+        intent_like,
+        engine.context,
+        top_n=3,
+        goal_lower=build_goal,
+    )
+    _print_ranked_strategies(ranked)
+
+    if auto_approve:
+        choice_raw = "1"
+    else:
+        choice_raw = typer.prompt(
+            "Pick a strategy [1-3], or describe (e.g. docker compose, kubernetes, serverless)"
+        )
+    resolved = resolve_strategy_choice(choice_raw, ranked)
+    chosen = resolved if resolved is not None else ranked[0]
+    strategy = chosen.strategy
+
+    decision = run_async(engine.build_recommendation(strategy, build_goal))
+    decision.strategy = strategy
     typer.echo(f"FORGE recommends: {decision.strategy.value}")
     typer.echo(decision.reasoning)
     _print_strategy_quick_guide()
@@ -109,11 +153,13 @@ def build(
     if not approved:
         alternatives = list(DeploymentStrategy)
         typer.echo("Available strategies:")
-        for index_value, strategy in enumerate(alternatives, start=1):
-            typer.echo(f"  [{index_value}] {strategy.value}")
-        chosen = typer.prompt("Choose a strategy number", default="1")
-        choice_index = max(1, min(len(alternatives), int(chosen))) - 1
+        for index_value, strat in enumerate(alternatives, start=1):
+            typer.echo(f"  [{index_value}] {strat.value}")
+        chosen_num = typer.prompt("Choose a strategy number", default="1")
+        choice_index = max(1, min(len(alternatives), int(chosen_num))) - 1
         decision.strategy = alternatives[choice_index]
+        strategy = decision.strategy
+
     decision.user_confirmed = True
 
     session = ConversationSession(
@@ -125,15 +171,36 @@ def build(
     )
     workspace.save_session(session)
 
-    generated = run_async(
-        generate_strategy_artifacts(
-            settings=effective_settings,
-            project_path=resolved_project_path,
-            strategy=decision.strategy,
-            cloud=connection.cloud_provider or intent.mentioned_cloud,
-            message_bus=bus,
+    if decision.strategy in _MANAGER_PIPELINED:
+        final_state = run_async(
+            run_manager_build_pipeline(
+                settings=effective_settings,
+                message_bus=bus,
+                project_path=resolved_project_path,
+                scan=scan_result,
+                strategy=decision.strategy,
+            )
         )
-    )
+        if final_state.current_step == "error":
+            typer.secho("Captain review could not approve this build plan.", fg="red")
+            for err in final_state.errors:
+                typer.echo(f"  - {err}")
+            raise typer.Exit(1)
+        generated = generated_artifacts_from_swarm_state(
+            task_id=final_state.task_id,
+            strategy=decision.strategy,
+            state=final_state,
+        )
+    else:
+        generated = run_async(
+            generate_strategy_artifacts(
+                settings=effective_settings,
+                project_path=resolved_project_path,
+                strategy=decision.strategy,
+                cloud=connection.cloud_provider or intent.mentioned_cloud,
+                message_bus=bus,
+            )
+        )
     artifact_dir = output_dir or (workspace.workspace_dir / "generated")
     written = write_generated_artifacts(
         output_dir=artifact_dir,
@@ -192,6 +259,18 @@ def build(
             typer.echo(f"Review URL: {approval_url}")
 
 
+def _print_ranked_strategies(ranked: list[ScoredStrategy]) -> None:
+    typer.echo("\nTop deployment strategies (pick one):")
+    for i, item in enumerate(ranked, start=1):
+        typer.echo(f"\n  [{i}] {item.strategy.value} (score {item.score:.0f}/100)")
+        typer.echo(f"      {item.reason}")
+        typer.echo(f"      When: {item.when_to_use}")
+        typer.echo(f"      Pros: {', '.join(item.pros)}")
+        typer.echo(f"      Cons: {', '.join(item.cons)}")
+        typer.echo(f"      Later: {item.migration_path}")
+    typer.echo("")
+
+
 def _print_next_steps(*, artifact_dir: Path, strategy: DeploymentStrategy) -> None:
     resolved = artifact_dir.expanduser().resolve()
     guide_path = resolved / "instruction_deploy.md"
@@ -208,7 +287,8 @@ def _print_next_steps(*, artifact_dir: Path, strategy: DeploymentStrategy) -> No
         typer.echo("  3) Copy `.github/workflows/generated-ci.yml` into your repo and commit it")
     else:
         typer.echo("  3) Review supplemental platform files in `.forge/generated`")
-    typer.echo("  4) If anything is unclear, rerun `forge build --goal \"...\"` with more detail.")
+    typer.echo("  4) Ask the Manager: `forge ask \"why did you pick this strategy?\"`")
+    typer.echo("  5) If anything is unclear, rerun `forge build --goal \"...\"` with more detail.")
 
 
 def _print_strategy_quick_guide() -> None:

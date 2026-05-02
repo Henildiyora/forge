@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -26,6 +27,7 @@ from forge.core.exceptions import SandboxToolingError
 from forge.core.message_bus import MessageBus
 from forge.core.strategies import DeploymentStrategy
 from forge.core.workspace import ArtifactManifest, ForgeWorkspace
+from forge.orchestrator.state import SwarmState
 
 
 class GeneratedArtifacts(BaseModel):
@@ -146,6 +148,37 @@ async def generate_strategy_artifacts(
     )
 
 
+def generated_artifacts_from_swarm_state(
+    *,
+    task_id: str,
+    strategy: DeploymentStrategy,
+    state: SwarmState,
+) -> GeneratedArtifacts:
+    """Build :class:`GeneratedArtifacts` from post-Captain :class:`SwarmState` (manager pipeline)."""
+
+    evidence: list[str] = []
+    for name in ("docker_specialist", "k8s_specialist", "cicd_specialist"):
+        result = state.agent_results.get(name)
+        if result is not None and result.success:
+            evidence.extend(result.evidence)
+    confidences = [
+        state.agent_results[n].confidence
+        for n in ("docker_specialist", "k8s_specialist", "cicd_specialist")
+        if n in state.agent_results and state.agent_results[n].success
+    ]
+    confidence = min(confidences) if confidences else 0.85
+    return GeneratedArtifacts(
+        task_id=task_id,
+        strategy=strategy,
+        dockerfile=state.dockerfile,
+        docker_compose=state.docker_compose,
+        k8s_manifests=state.k8s_manifests,
+        cicd_pipeline=state.cicd_pipeline,
+        evidence=evidence,
+        confidence=confidence,
+    )
+
+
 def write_generated_artifacts(
     *,
     output_dir: str | Path,
@@ -205,34 +238,234 @@ def _render_deploy_instruction(
     files: list[str],
     output_root: Path,
 ) -> str:
-    file_lines = "\n".join(
-        f"- `{name}`: {_describe_generated_file(name)}" for name in sorted(files)
+    scan_blurb = _scan_summary_from_workspace(output_root)
+    lines: list[str] = [
+        "# Deployment runbook (FORGE)",
+        "",
+        "FORGE generated these files from an automated scan. **Read each section before you run "
+        "commands in production.** Replace angle-bracket placeholders (for example "
+        "`<your_image_name>`) with your own names — they are intentionally not real paths.",
+        "",
+        "## Placeholder legend",
+        "",
+        "| Placeholder | Meaning |",
+        "|---------------|---------|",
+        "| `<your_project_root>` | Directory that contains your app source and the `.forge/` folder |",
+        "| `<your_image_name>` | Docker image reference you control, e.g. `ghcr.io/org/app:1.0` |",
+        "| `<your_kube_context>` | Name from `kubectl config get-contexts` |",
+        "",
+        "## Project summary (from last `forge index`)",
+        "",
+        scan_blurb,
+        "",
+        "## Generated files (read before deploy)",
+        "",
+    ]
+    for name in sorted(files):
+        if name == "instruction_deploy.md":
+            continue
+        lines.extend(_markdown_file_explainer(name))
+    lines.extend(
+        [
+            "",
+            "## Prerequisites checklist",
+            "",
+            _prerequisites_markdown(strategy),
+            "",
+            "## Commands (run in order)",
+            "",
+            _command_walkthrough(strategy),
+            "",
+            "## Validation checklist",
+            "",
+            "- Application responds on the expected port without crash loops.",
+            "- Logs show expected startup lines (no repeated traceback).",
+            "- Health or root URL returns success where applicable.",
+            "- Secrets and env vars are set in the runtime you chose (not only in compose files).",
+            "",
+            "## If something fails",
+            "",
+            "- **Docker: cannot connect to daemon** — start Docker Desktop (macOS) or the Docker "
+            "service on Linux; verify with `docker info`.",
+            "- **kubectl: connection refused** — check `<your_kube_context>` and cluster VPN.",
+            "- **Wrong port** — compare scan summary above with `EXPOSE` / compose ports / "
+            "Service `targetPort`.",
+            "",
+            "- Run `forge doctor --post-install` for a PATH and tooling checklist.",
+            "- Ask the Manager: `forge ask \"explain the error above\"` from `<your_project_root>`.",
+            "",
+            "## Next improvements",
+            "",
+            _strategy_improvements(strategy),
+            "",
+        ]
     )
-    commands = _strategy_commands(strategy)
-    command_block = "\n".join(commands)
-    improvement_notes = _strategy_improvements(strategy)
+    return "\n".join(lines)
+
+
+def _scan_summary_from_workspace(output_root: Path) -> str:
+    index_path = output_root.parent / "index.json"
+    if not index_path.is_file():
+        return "_No `.forge/index.json` found next to this folder — run `forge index` in the project root._"
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return f"_Could not read index: {exc}_"
     return (
-        "# Deployment Instructions\n\n"
-        f"Generated output directory: `{output_root}`\n\n"
-        "## What FORGE Generated\n"
-        f"{file_lines}\n\n"
-        "## Step-by-Step Commands\n"
-        "Run these commands from your project root unless noted otherwise.\n\n"
-        "```bash\n"
-        f"{command_block}\n"
-        "```\n\n"
-        "## Validation Checklist\n"
-        "- Confirm application starts without errors.\n"
-        "- Confirm health endpoint responds successfully.\n"
-        "- Confirm logs show no repeated crash/restart loops.\n"
-        "- Confirm environment variables/secrets are populated for your runtime.\n\n"
-        "## If Something Fails\n"
-        "- Re-open generated files and verify image names, ports, and env vars.\n"
-        "- Validate YAML syntax before applying changes.\n"
-        "- Run `forge doctor` to check local prerequisites.\n\n"
-        "## Next Improvements\n"
-        f"{improvement_notes}\n"
+        f"- **Language:** {data.get('language', '?')}\n"
+        f"- **Framework:** {data.get('framework', '?')}\n"
+        f"- **Port:** {data.get('port', '?')}\n"
+        f"- **Service count (heuristic):** {data.get('service_count', '?')}\n"
+        f"- **Entry:** {data.get('entry_point', '?')}\n"
     )
+
+
+def _markdown_file_explainer(path: str) -> list[str]:
+    title = f"### `{path}`"
+    body = _describe_generated_file_long(path)
+    return [title, "", body, ""]
+
+
+def _describe_generated_file_long(path: str) -> str:
+    if path == "Dockerfile":
+        return (
+            "**Purpose:** Defines how your application is packaged into a container image.\n\n"
+            "**What to edit:** Base image, dependency install steps, `EXPOSE` port, and the "
+            "`CMD` that starts your server.\n\n"
+            "**Common mistake:** Port inside the container must match what Kubernetes Service "
+            "or compose publishes.\n"
+        )
+    if path.endswith("docker-compose.generated.yml"):
+        return (
+            "**Purpose:** Runs your app (and dependencies) on a single Docker host for dev or "
+            "small deployments.\n\n"
+            "**What to edit:** Build context paths, published ports, environment variables, "
+            "volume mounts.\n\n"
+            "**Common mistake:** Forgetting to export env vars the app reads at startup.\n"
+        )
+    if ".github/workflows" in path and path.endswith(".yml"):
+        return (
+            "**Purpose:** CI workflow skeleton (build/test/deploy hooks).\n\n"
+            "**What to edit:** Triggers, branches, secrets names, and any deploy steps for "
+            "your platform.\n\n"
+            "**Common mistake:** Committing real secrets — use repository secret settings instead.\n"
+        )
+    if path.endswith(".yaml") or path.endswith(".yml"):
+        return (
+            "**Purpose:** Kubernetes object (Deployment, Service, etc.) applied with `kubectl`.\n\n"
+            "**What to edit:** Image name, resource requests/limits, probes, namespace, labels.\n\n"
+            "**Common mistake:** Image pull errors — verify registry auth and image tag exists.\n"
+        )
+    if path == "instruction_deploy.md":
+        return "**Purpose:** This runbook.\n"
+    return (
+        "**Purpose:** Supporting artifact from FORGE for your chosen strategy.\n\n"
+        "**What to edit:** Review contents against your org standards before applying.\n"
+    )
+
+
+def _prerequisites_markdown(strategy: DeploymentStrategy) -> str:
+    lines = [
+        "- [ ] You are in `<your_project_root>` in a terminal.",
+        "- [ ] `forge doctor --quick` shows Python OK.",
+    ]
+    if strategy in (DeploymentStrategy.DOCKER_COMPOSE, DeploymentStrategy.KUBERNETES):
+        lines.append("- [ ] `docker info` works (daemon running).")
+    if strategy == DeploymentStrategy.KUBERNETES:
+        lines.extend(
+            [
+                "- [ ] `kubectl version --client` works.",
+                "- [ ] Optional: `vcluster` installed if you use FORGE sandbox validation.",
+            ]
+        )
+    if strategy == DeploymentStrategy.SERVERLESS:
+        lines.append("- [ ] Serverless CLI for your provider is installed and authenticated.")
+    return "\n".join(lines)
+
+
+def _command_walkthrough(strategy: DeploymentStrategy) -> str:
+    blocks: list[str] = []
+    if strategy == DeploymentStrategy.DOCKER_COMPOSE:
+        blocks.append(
+            "#### 1) Go to generated assets\n\n"
+            "```bash\n"
+            "cd <your_project_root>/.forge/generated\n"
+            "```\n\n"
+            "_Why:_ All generated paths in this doc assume this directory.\n\n"
+            "#### 2) Build and start Compose\n\n"
+            "```bash\n"
+            "docker compose -f docker-compose.generated.yml up --build -d\n"
+            "```\n\n"
+            "_What it does:_ Builds the image from `Dockerfile` and starts containers in the "
+            "background.\n\n"
+            "**If it fails:** run `docker compose ... logs` and confirm Docker Desktop is running.\n\n"
+            "#### 3) Check status and logs\n\n"
+            "```bash\n"
+            "docker compose -f docker-compose.generated.yml ps\n"
+            "docker compose -f docker-compose.generated.yml logs --tail=100\n"
+            "```\n"
+        )
+    elif strategy == DeploymentStrategy.KUBERNETES:
+        blocks.append(
+            "#### 1) Go to generated assets\n\n"
+            "```bash\n"
+            "cd <your_project_root>/.forge/generated\n"
+            "```\n\n"
+            "#### 2) Build and push an image\n\n"
+            "```bash\n"
+            "docker build -t <your_image_name> -f Dockerfile ..\n"
+            "# docker push <your_image_name>   # after docker login to your registry\n"
+            "```\n\n"
+            "_What `<your_image_name>` means:_ A tag **you** choose (registry + name + version). "
+            "It must match `image:` fields inside `deployment.yaml`.\n\n"
+            "**If `docker build` fails:** see *Docker: cannot connect to daemon* in the "
+            "troubleshooting section.\n\n"
+            "#### 3) Select cluster context\n\n"
+            "```bash\n"
+            "kubectl config use-context <your_kube_context>\n"
+            "```\n\n"
+            "#### 4) Apply manifests\n\n"
+            "```bash\n"
+            "kubectl apply -f deployment.yaml\n"
+            "kubectl apply -f service.yaml\n"
+            "kubectl get pods,svc\n"
+            "```\n\n"
+            "#### 5) Inspect workload\n\n"
+            "```bash\n"
+            "kubectl logs deployment/<your_deployment_name> --tail=100\n"
+            "```\n\n"
+            "_Replace `<your_deployment_name>`:_ open `deployment.yaml` and read `metadata.name`.\n"
+        )
+    elif strategy == DeploymentStrategy.SERVERLESS:
+        blocks.append(
+            "#### Deploy with your serverless CLI\n\n"
+            "```bash\n"
+            "cd <your_project_root>/.forge/generated\n"
+            "serverless deploy\n"
+            "serverless info\n"
+            "```\n\n"
+            "_Note:_ Install the Serverless Framework (or your cloud's CLI) first; FORGE does not "
+            "install cloud CLIs automatically.\n"
+        )
+    elif strategy == DeploymentStrategy.CICD_ONLY:
+        blocks.append(
+            "#### Copy workflow into your repository\n\n"
+            "```bash\n"
+            "cd <your_project_root>\n"
+            "cp .forge/generated/.github/workflows/generated-ci.yml .github/workflows/\n"
+            "git add .github/workflows/generated-ci.yml\n"
+            "git commit -m \"Add FORGE-generated CI workflow\"\n"
+            "```\n"
+        )
+    else:
+        blocks.append(
+            "#### Review generated overlay files\n\n"
+            "```bash\n"
+            "cd <your_project_root>/.forge/generated\n"
+            "ls -la\n"
+            "```\n"
+        )
+    return "\n".join(blocks)
 
 
 def _describe_generated_file(path: str) -> str:
@@ -250,39 +483,41 @@ def _describe_generated_file(path: str) -> str:
 
 
 def _strategy_commands(strategy: DeploymentStrategy) -> list[str]:
+    """Compact command list (used by tests and legacy callers)."""
+
     if strategy == DeploymentStrategy.DOCKER_COMPOSE:
         return [
-            "cd .forge/generated",
+            "cd <your_project_root>/.forge/generated",
             "docker compose -f docker-compose.generated.yml up --build -d",
             "docker compose -f docker-compose.generated.yml ps",
             "docker compose -f docker-compose.generated.yml logs --tail=100",
         ]
     if strategy == DeploymentStrategy.KUBERNETES:
         return [
-            "cd .forge/generated",
-            "docker build -t your-image:latest -f Dockerfile ..",
+            "cd <your_project_root>/.forge/generated",
+            "docker build -t <your_image_name> -f Dockerfile ..",
             "kubectl apply -f deployment.yaml",
             "kubectl apply -f service.yaml",
             "kubectl get pods,svc",
-            "kubectl logs deployment/app --tail=100",
+            "kubectl logs deployment/<your_deployment_name> --tail=100",
         ]
     if strategy == DeploymentStrategy.SERVERLESS:
         return [
-            "cd .forge/generated",
+            "cd <your_project_root>/.forge/generated",
             "# Install your serverless runtime tooling if needed",
             "serverless deploy",
             "serverless info",
         ]
     if strategy == DeploymentStrategy.CICD_ONLY:
         return [
-            "cd .forge/generated",
+            "cd <your_project_root>/.forge/generated",
             "ls .github/workflows",
             "# Copy the generated workflow into your repository's .github/workflows/",
             "git add .github/workflows/generated-ci.yml",
-            "git commit -m \"Add generated CI workflow\"",
+            'git commit -m "Add generated CI workflow"',
         ]
     return [
-        "cd .forge/generated",
+        "cd <your_project_root>/.forge/generated",
         "# Review supplemental overlay files generated by FORGE",
         "ls",
     ]

@@ -1,8 +1,9 @@
 {
-  "task_id": "build-0b08fb38",
+  "task_id": "build-49a896e0",
   "strategy": "docker_compose",
   "files": [
     "Dockerfile",
-    "docker-compose.generated.yml"
+    "docker-compose.generated.yml",
+    "instruction_deploy.md"
   ]
 }

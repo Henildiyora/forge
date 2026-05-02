@@ -26,6 +26,13 @@ def doctor(
             help="Run the full health probe (default) or a quick offline-only check.",
         ),
     ] = True,
+    post_install: Annotated[
+        bool,
+        typer.Option(
+            "--post-install",
+            help="Print a first-run checklist after installing FORGE (PATH, forge, Docker).",
+        ),
+    ] = False,
 ) -> None:
     """Inspect the local FORGE environment and report each prerequisite.
 
@@ -106,11 +113,29 @@ def doctor(
         table.add_row("Slack signing secret (optional)", _WARN, "Web fallback approval still works")
 
     console.print(table)
+    if local_bin not in path_entries:
+        # Plain echo so terminals/tests always see the remediation string (Rich tables can
+        # format detail cells differently depending on width).
+        typer.echo(
+            "pipx PATH tip: ~/.local/bin is not on PATH — run pipx ensurepath, then restart your shell."
+        )
     console.print(
         "\nFORGE works offline with no API key. Optional rows above only matter "
         "when you opt in to that integration.",
         style="dim",
     )
+    if post_install:
+        console.print(
+            "\n[bold]Post-install checklist[/bold]\n"
+            "1) Run: [cyan]which forge[/cyan] — if empty, run [cyan]pipx ensurepath[/cyan] "
+            "and restart the terminal.\n"
+            "2) Run: [cyan]forge --help[/cyan] — should list build, ask, chat, explain.\n"
+            "3) For Docker workflows: start Docker Desktop (macOS) or the Docker daemon (Linux); "
+            "then [cyan]docker info[/cyan].\n"
+            "4) For Kubernetes sandbox: [cyan]brew install loft-sh/tap/vcluster[/cyan] (macOS) "
+            "or install vcluster for your OS.\n"
+            "5) In any project: [cyan]forge index[/cyan] then [cyan]forge build[/cyan].",
+        )
 
 
 def _probe_http(url: str) -> tuple[bool, str]:

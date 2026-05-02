@@ -15,7 +15,7 @@ def test_status_command() -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["status"])
     assert result.exit_code == 0
-    assert "structured build conversations" in result.stdout
+    assert "Manager-led build flow" in result.stdout
     assert "approval checkpoints" in result.stdout
     assert "hardening suite" in result.stdout
 
@@ -63,6 +63,20 @@ def test_index_command_persists_scan_result(python_fastapi_project: Path) -> Non
     assert payload["service_count"] >= 1
 
 
+def test_ask_command_returns_answer(python_fastapi_project: Path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "ask",
+            "Why did FORGE pick a deployment strategy?",
+            str(python_fastapi_project),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "FORGE" in result.stdout or "deployment" in result.stdout.lower()
+
+
 def test_build_command_generates_serverless_artifacts(
     tmp_path: Path,
     python_fastapi_project: Path,
@@ -86,10 +100,15 @@ def test_build_command_generates_serverless_artifacts(
 
     assert result.exit_code == 0
     assert "FORGE recommends: serverless" in result.stdout
+    assert "Project scan summary" in result.stdout
+    assert "Top deployment strategies" in result.stdout
     assert "Quick strategy guide:" in result.stdout
     assert "Open the deployment guide" in result.stdout
     assert (output_dir / "serverless.yml").exists()
     assert (output_dir / "instruction_deploy.md").exists()
+    guide = (output_dir / "instruction_deploy.md").read_text(encoding="utf-8")
+    assert "<your_project_root>" in guide
+    assert "Placeholder legend" in guide
     session_path = python_fastapi_project / ".forge" / "session.json"
     assert session_path.exists()
     session_payload = json.loads(session_path.read_text(encoding="utf-8"))
@@ -224,6 +243,14 @@ def test_approvals_commands_can_list_and_grant_requests() -> None:
     assert stored.status == "granted"
 
 
+def test_doctor_post_install_checklist() -> None:
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", "--quick", "--post-install"])
+    assert result.exit_code == 0
+    assert "Post-install checklist" in result.stdout
+    assert "which forge" in result.stdout
+
+
 def test_doctor_reports_missing_pipx_path(monkeypatch: pytest.MonkeyPatch) -> None:
     runner = CliRunner()
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
@@ -232,4 +259,4 @@ def test_doctor_reports_missing_pipx_path(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert result.exit_code == 0
     assert "pipx PATH" in result.stdout
-    assert "run `pipx ensurepath`" in result.stdout
+    assert "pipx ensurepath" in result.stdout

@@ -6,12 +6,17 @@ boundaries described in [`trust.md`](trust.md).
 
 ## Phase 2 surface
 
-The CLI exposes three workflow commands and several utilities:
+The CLI exposes workflow commands and utilities. The **Manager** path is the
+default `forge build` experience: project preview, ranked strategies (top 3),
+then specialist agents (Docker / Kubernetes / CI/CD) with **Captain** review for
+Docker Compose, Kubernetes, and CI-only strategies; serverless and extend-existing
+flows still use the legacy generator bundle.
 
 | Command | Purpose |
 |---------|---------|
 | `forge index` | Run the Librarian scan and persist `.forge/index.json`. |
-| `forge build` | Conversation → strategy → generation → sandbox validation. |
+| `forge build` | Clarifications → preview → ranked strategies → Manager pipeline → artifacts. |
+| `forge ask` / `forge chat` / `forge explain` | Talk to the Manager about the project or generated files. |
 | `forge monitor` | Watchman snapshot or escalate to the incident workflow. |
 | `forge connect` | Save project-local backend, model, approval transport, cloud preference. |
 | `forge setup` | Pick the best LLM backend for the local machine. |
@@ -52,11 +57,13 @@ forge build /absolute/path/to/project --goal "Deploy this API to Kubernetes" --a
 
 1. Loads or refreshes `.forge/index.json`.
 2. Asks clarifying questions only when `intent` is missing required fields.
-3. Calls the deterministic strategy selector (`forge/conversation/strategy_selector.py`).
-4. Calls the appropriate specialist agent (Docker, K8s, CI/CD, Cloud, Existing).
-5. Writes artifacts under `.forge/generated/` (override with `--output-dir`).
-6. When the strategy is Kubernetes, runs the SandboxTester against a vcluster.
-7. With `--live`, requests an approval and pauses until granted.
+3. Prints a **project preview** (Manager) and optionally asks for confirmation.
+4. Ranks the top strategies (`forge/conversation/strategy_ranking.py`) and shows pros/cons.
+5. For **Docker Compose**, **Kubernetes**, and **CI/CD-only**, runs the Manager pipeline
+   (specialists + `MessageBus` + Captain graph); otherwise uses the legacy generator bundle.
+6. Writes artifacts under `.forge/generated/` (override with `--output-dir`).
+7. When the strategy is Kubernetes, runs the SandboxTester against a vcluster.
+8. With `--live`, requests an approval and pauses until granted.
 
 ### Docker intent vs Kubernetes complexity
 
