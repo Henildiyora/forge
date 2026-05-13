@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+import re
+from collections.abc import Callable, Mapping
 from enum import Enum
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import httpx
 import structlog
@@ -11,6 +12,21 @@ from pydantic import BaseModel, Field
 
 from forge.core.config import Settings
 from forge.core.exceptions import InsufficientEvidenceError
+
+_OLLAMA_FORGE_SYSTEM = (
+    "You are FORGE's structured output generator. Reply with a single JSON object only "
+    '(no markdown fences, no prose). Keys: "data" (object — the payload described in the '
+    'user message), "evidence" (non-empty array of short factual strings), '
+    '"confidence" (number from 0 to 1). '
+    "The data object must strictly match the schema implied by the user prompt."
+)
+
+_OPENAI_COMPAT_FORGE_SYSTEM = (
+    "You are FORGE. Return a single JSON object only with keys: data (object), "
+    "evidence (array of strings), confidence (number 0-1). "
+    "The data object must satisfy the user's instructions. "
+    "Expected response shape hint: {expected_format}."
+)
 
 
 class LLMResponse(BaseModel):
@@ -113,13 +129,66 @@ class HeuristicProvider:
         )
 
 
-class HTTPJSONProvider:
-    """Minimal HTTP JSON backend for Ollama and llama.cpp style local servers."""
+def _strip_code_fences(text: str) -> str:
+    stripped = text.strip()
+    m = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", stripped, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    return stripped
 
-    def __init__(self, *, base_url: str, model: str, provider_name: str) -> None:
+
+def _normalize_model_json_to_llm_response(obj: Mapping[str, Any]) -> LLMResponse:
+    """Turn a model-produced JSON dict into a validated LLMResponse."""
+
+    reserved = {"evidence", "confidence", "raw_text"}
+    if isinstance(obj.get("data"), dict):
+        data = cast(dict[str, object], obj["data"])
+    else:
+        data = {k: v for k, v in obj.items() if k not in reserved}
+        if not data:
+            data = {"payload": dict(obj)}
+    evidence_raw = obj.get("evidence")
+    if isinstance(evidence_raw, list) and evidence_raw:
+        evidence = [str(e).strip() for e in evidence_raw if str(e).strip()]
+    else:
+        evidence = []
+    if not evidence:
+        evidence = ["Model response normalized by FORGE."]
+    conf = obj.get("confidence", 0.72)
+    if not isinstance(conf, (int, float)):
+        conf = 0.72
+    conf_f = float(max(0.0, min(1.0, float(conf))))
+    if conf_f < 0.5:
+        conf_f = 0.72
+    rt = obj.get("raw_text")
+    raw_text = rt if isinstance(rt, str) else json.dumps(data)
+    return LLMResponse(data=data, evidence=evidence, confidence=conf_f, raw_text=raw_text)
+
+
+def _parse_text_to_llm_response(content: str) -> LLMResponse:
+    inner = _strip_code_fences(content)
+    try:
+        parsed = json.loads(inner)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Ollama returned non-JSON content: {inner[:200]!r}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("Ollama JSON root must be an object")
+    return _normalize_model_json_to_llm_response(cast(dict[str, Any], parsed))
+
+
+class OllamaProvider:
+    """Calls Ollama's native ``/api/chat`` API with JSON-formatted output."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.provider_name = provider_name
+        self._transport = transport
 
     async def complete(
         self,
@@ -129,20 +198,91 @@ class HTTPJSONProvider:
         agent: str,
         expected_format: str,
     ) -> LLMResponse:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        del agent
+        async with httpx.AsyncClient(
+            timeout=120.0,
+            transport=self._transport,
+        ) as client:
             response = await client.post(
-                f"{self.base_url}/v1/completions",
+                f"{self.base_url}/api/chat",
                 json={
                     "model": self.model,
-                    "prompt": prompt,
-                    "task_id": task_id,
-                    "agent": agent,
-                    "expected_format": expected_format,
+                    "stream": False,
+                    "format": "json",
+                    "messages": [
+                        {"role": "system", "content": _OLLAMA_FORGE_SYSTEM},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"TASK_ID: {task_id}\n"
+                                f"EXPECTED_FORMAT: {expected_format}\n\n"
+                                f"{prompt}"
+                            ),
+                        },
+                    ],
                 },
             )
             response.raise_for_status()
-            payload = response.json()
-        return LLMResponse.model_validate(payload)
+            body = response.json()
+        message = body.get("message")
+        if not isinstance(message, dict):
+            raise ValueError("Ollama response missing message")
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise ValueError("Ollama message.content must be a string")
+        return _parse_text_to_llm_response(content)
+
+
+class OpenAICompatProvider:
+    """OpenAI-compatible chat completions (e.g. llama.cpp ``/v1/chat/completions``)."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        provider_name: str,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.provider_name = provider_name
+        self._transport = transport
+
+    async def complete(
+        self,
+        *,
+        prompt: str,
+        task_id: str,
+        agent: str,
+        expected_format: str,
+    ) -> LLMResponse:
+        system = _OPENAI_COMPAT_FORGE_SYSTEM.format(expected_format=expected_format)
+        async with httpx.AsyncClient(timeout=120.0, transport=self._transport) as client:
+            response = await client.post(
+                f"{self.base_url}/v1/chat/completions",
+                json={
+                    "model": self.model,
+                    "temperature": 0.2,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {
+                            "role": "user",
+                            "content": f"TASK_ID: {task_id}\nAGENT: {agent}\n\n{prompt}",
+                        },
+                    ],
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("OpenAI-compat response missing choices")
+        msg = choices[0].get("message", {})
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, str):
+            raise ValueError("OpenAI-compat message.content must be a string")
+        return _parse_text_to_llm_response(content)
 
 
 class OpenAIProvider:
@@ -239,6 +379,15 @@ class AnthropicProvider:
         return LLMResponse.model_validate(json.loads(raw_text))
 
 
+def _provider_supports_heuristic_fallback(provider: SupportsLLMProvider) -> bool:
+    """Only real remote backends auto-fall back; test stubs should surface errors."""
+
+    return isinstance(
+        provider,
+        (OllamaProvider, OpenAICompatProvider, OpenAIProvider, AnthropicProvider),
+    )
+
+
 class LLMClient:
     """Shared wrapper for evidence-constrained LLM access."""
 
@@ -246,24 +395,26 @@ class LLMClient:
         self,
         settings: Settings,
         provider: SupportsLLMProvider | None = None,
+        *,
+        on_provider_fallback_notice: Callable[[str], None] | None = None,
     ) -> None:
         self.settings = settings
         self.provider = provider or self._init_provider()
         self.logger = structlog.get_logger().bind(component="llm_client")
+        self.on_provider_fallback_notice = on_provider_fallback_notice
 
-    async def complete(
+    async def _complete_once(
         self,
+        provider: SupportsLLMProvider,
         *,
         prompt: str,
         task_id: str,
         agent: str,
         expected_format: str,
-        minimum_evidence: int = 1,
-        minimum_confidence: float = 0.5,
+        minimum_evidence: int,
+        minimum_confidence: float,
     ) -> LLMResponse:
-        """Complete a prompt and enforce evidence and confidence requirements."""
-
-        raw_response = await self.provider.complete(
+        raw_response = await provider.complete(
             prompt=prompt,
             task_id=task_id,
             agent=agent,
@@ -287,6 +438,64 @@ class LLMClient:
             confidence=response.confidence,
         )
         return response
+
+    async def complete(
+        self,
+        *,
+        prompt: str,
+        task_id: str,
+        agent: str,
+        expected_format: str,
+        minimum_evidence: int = 1,
+        minimum_confidence: float = 0.5,
+    ) -> LLMResponse:
+        """Complete a prompt and enforce evidence and confidence requirements."""
+
+        try:
+            return await self._complete_once(
+                self.provider,
+                prompt=prompt,
+                task_id=task_id,
+                agent=agent,
+                expected_format=expected_format,
+                minimum_evidence=minimum_evidence,
+                minimum_confidence=minimum_confidence,
+            )
+        except (InsufficientEvidenceError, httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            if isinstance(self.provider, HeuristicProvider) or not _provider_supports_heuristic_fallback(
+                self.provider
+            ):
+                raise
+            self.logger.warning(
+                "llm_provider_fallback",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                backend=self.settings.llm_backend,
+            )
+            notice = (
+                f"FORGE could not use the {self.settings.llm_backend} backend "
+                f"({type(exc).__name__}: {exc}). Falling back to the heuristic engine for "
+                "this request. Run `forge doctor` to diagnose."
+            )
+            if self.on_provider_fallback_notice is not None:
+                self.on_provider_fallback_notice(notice)
+            try:
+                return await self._complete_once(
+                    HeuristicProvider(),
+                    prompt=prompt,
+                    task_id=task_id,
+                    agent=agent,
+                    expected_format=expected_format,
+                    minimum_evidence=minimum_evidence,
+                    minimum_confidence=minimum_confidence,
+                )
+            except Exception as second:  # noqa: BLE001
+                self.logger.error(
+                    "llm_heuristic_fallback_failed",
+                    error=str(second),
+                    error_type=type(second).__name__,
+                )
+                raise second from exc
 
     def validate_response(
         self,
@@ -343,13 +552,12 @@ class LLMClient:
         if backend == LLMBackend.HEURISTIC:
             return HeuristicProvider()
         if backend == LLMBackend.OLLAMA:
-            return HTTPJSONProvider(
+            return OllamaProvider(
                 base_url=self.settings.ollama_base_url,
                 model=self.settings.ollama_model,
-                provider_name="ollama",
             )
         if backend == LLMBackend.LLAMACPP:
-            return HTTPJSONProvider(
+            return OpenAICompatProvider(
                 base_url=self.settings.llamacpp_base_url,
                 model=self.settings.llamacpp_model,
                 provider_name="llamacpp",

@@ -78,9 +78,13 @@ def build(
         llm_model=settings.llm_model,
         approval_transport="web",
     )
-    effective_settings = settings.model_copy(
-        update={"llm_backend": connection.llm_backend, "llm_model": connection.llm_model}
-    )
+    connection_updates: dict[str, object] = {
+        "llm_backend": connection.llm_backend,
+        "llm_model": connection.llm_model,
+    }
+    if connection.llm_backend == "ollama":
+        connection_updates["ollama_model"] = connection.llm_model
+    effective_settings = settings.model_copy(update=connection_updates)
     librarian = LibrarianAgent(settings=effective_settings, message_bus=bus)
     scan_result = workspace.load_index()
     if scan_result is None:
@@ -94,12 +98,33 @@ def build(
         )
 
     build_goal = goal or typer.prompt("What are you trying to deploy?")
-    llm = LLMClient(effective_settings)
+
+    _fallback_warned = False
+
+    def _llm_fallback_notice(msg: str) -> None:
+        nonlocal _fallback_warned
+        if not _fallback_warned:
+            typer.secho(msg, fg="yellow")
+            _fallback_warned = True
+
+    llm = LLMClient(effective_settings, on_provider_fallback_notice=_llm_fallback_notice)
     engine = ConversationEngine(llm=llm, scan_result=scan_result)
-    intent = run_async(engine.interpret_intent(build_goal))
+    try:
+        intent = run_async(engine.interpret_intent(build_goal))
+    except Exception as exc:
+        typer.secho("FORGE could not interpret your deployment goal.", fg="red")
+        typer.echo(str(exc))
+        typer.echo("Try: forge setup --backend heuristic")
+        raise typer.Exit(1) from exc
 
     while engine.needs_clarification(intent):
-        question = run_async(engine.next_clarification_question(intent))
+        try:
+            question = run_async(engine.next_clarification_question(intent))
+        except Exception as exc:
+            typer.secho("FORGE could not load the next clarification question.", fg="red")
+            typer.echo(str(exc))
+            typer.echo("Try: forge setup --backend heuristic")
+            raise typer.Exit(1) from exc
         typer.echo(question.render_terminal_box())
         answer = typer.prompt("")
         normalized = answer
@@ -140,7 +165,13 @@ def build(
     chosen = resolved if resolved is not None else ranked[0]
     strategy = chosen.strategy
 
-    decision = run_async(engine.build_recommendation(strategy, build_goal))
+    try:
+        decision = run_async(engine.build_recommendation(strategy, build_goal))
+    except Exception as exc:
+        typer.secho("FORGE could not build the strategy recommendation.", fg="red")
+        typer.echo(str(exc))
+        typer.echo("Try: forge setup --backend heuristic")
+        raise typer.Exit(1) from exc
     decision.strategy = strategy
     typer.echo(f"FORGE recommends: {decision.strategy.value}")
     typer.echo(decision.reasoning)

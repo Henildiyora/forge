@@ -1,5 +1,5 @@
 {
-  "task_id": "build-49a896e0",
+  "task_id": "build-e36d74ae",
   "strategy": "docker_compose",
   "files": [
     "Dockerfile",

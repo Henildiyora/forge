@@ -17,6 +17,21 @@ green() { printf "\033[32m%s\033[0m\n" "$1"; }
 yellow() { printf "\033[33m%s\033[0m\n" "$1"; }
 red() { printf "\033[31m%s\033[0m\n" "$1" >&2; }
 
+_print_path_manual() {
+  echo "Action required: add pipx apps to PATH (this shell cannot run forge until you do):"
+  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+}
+
+_detect_zshrc_syntax_error() {
+  local zshrc="${HOME}/.zshrc"
+  [ -f "${zshrc}" ] || return 1
+  if ! zsh -n "${zshrc}" 2>/dev/null; then
+    yellow "Refusing to auto-edit ~/.zshrc: syntax check failed (run: zsh -n ~/.zshrc)."
+    return 0
+  fi
+  return 1
+}
+
 bold "FORGE installer"
 echo
 
@@ -49,23 +64,48 @@ green "✓ forge installed"
 
 if ! command -v forge >/dev/null 2>&1; then
   yellow "forge is installed but not on your PATH yet."
-  echo "What this does: 'pipx ensurepath' prints shell snippets so ~/.local/bin is on PATH."
+  echo "What this does: pipx installs apps under ~/.local/bin. Your shell must include that directory on PATH."
+  _print_path_manual
+  echo
   if [ -t 0 ] && command -v pipx >/dev/null 2>&1; then
-    read -r -p "Run 'pipx ensurepath' now (updates user PATH guidance)? [y/N] " consent
+    read -r -p "Run pipx ensurepath now (prints PATH guidance)? [y/N] " consent
     if [[ "${consent}" =~ ^[Yy]$ ]]; then
       pipx ensurepath || true
       export PATH="$HOME/.local/bin:$PATH"
     fi
   else
-    echo "Run this once to auto-configure PATH:"
-    echo "  pipx ensurepath"
+    echo "When you have a TTY, you can run: pipx ensurepath"
   fi
+
+  if ! command -v forge >/dev/null 2>&1; then
+    if [ -f "${HOME}/.zshrc" ]; then
+      if rc_err="$(zsh -i -c "true" 2>&1)"; then
+        :
+      else
+        if echo "${rc_err}" | grep -q "not valid in this context"; then
+          yellow "Your ~/.zshrc failed to load in zsh (this often blocks pipx ensurepath):"
+          echo "${rc_err}" | head -n 3
+          echo "Fix that line in ~/.zshrc first, then re-run this installer or add PATH manually."
+        fi
+      fi
+      _detect_zshrc_syntax_error || true
+    fi
+
+    if [ -t 0 ] && [ -f "${HOME}/.zshrc" ]; then
+      read -r -p "Append 'export PATH=\"\$HOME/.local/bin:\$PATH\"' to ~/.zshrc? [y/N] " consent_rc
+      if [[ "${consent_rc}" =~ ^[Yy]$ ]]; then
+        if zsh -n "${HOME}/.zshrc" 2>/dev/null; then
+          printf '\n# Added by FORGE installer\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"${HOME}/.zshrc"
+          green "Appended to ~/.zshrc — restart the terminal or: source ~/.zshrc"
+        else
+          yellow "Refusing to append: ~/.zshrc failed zsh -n (syntax error)."
+        fi
+      fi
+    fi
+  fi
+
   echo
-  echo "Then restart your shell."
-  echo "If it still fails, add this to your shell rc manually:"
-  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-  echo
-  echo "Quick verify after restart:"
+  echo "Restart your shell (or run the export line above), then verify:"
   echo "  which forge"
   echo "  forge doctor --post-install"
   exit 0

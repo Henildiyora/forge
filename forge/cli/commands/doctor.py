@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import sys
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, Any
 
 import httpx
 import typer
@@ -12,10 +14,48 @@ from rich.console import Console
 from rich.table import Table
 
 from forge.cli.runtime import cli_settings
+from forge.core.config import Settings
 
 _OK = "[green]OK[/green]"
 _WARN = "[yellow]WARN[/yellow]"
 _FAIL = "[red]FAIL[/red]"
+
+
+def _resolved_ollama_model(settings: Settings) -> str:
+    """Prefer project ``connection.json`` when cwd is a FORGE workspace."""
+
+    conn = Path.cwd() / settings.workspace_dir_name / "connection.json"
+    if not conn.is_file():
+        return str(settings.ollama_model)
+    try:
+        payload = json.loads(conn.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return str(settings.ollama_model)
+    if payload.get("llm_backend") == "ollama" and isinstance(payload.get("llm_model"), str):
+        return str(payload["llm_model"])
+    return str(settings.ollama_model)
+
+
+def _parse_ollama_tags_for_model(body: dict[str, Any], model_name: str) -> tuple[bool, str]:
+    """Return (is_present, detail_message)."""
+
+    models = body.get("models")
+    if not isinstance(models, list):
+        return False, "unexpected /api/tags payload"
+    names: list[str] = []
+    for item in models:
+        if isinstance(item, dict) and isinstance(item.get("name"), str):
+            names.append(item["name"])
+    if model_name in names:
+        return True, model_name
+    mbase = model_name.split(":", 1)[0]
+    for n in names:
+        nbase = n.split(":", 1)[0]
+        if n == model_name or n.startswith(model_name + ":") or model_name.startswith(n + ":"):
+            return True, n
+        if nbase == mbase:
+            return True, n
+    return False, f"{model_name} not pulled — run: ollama pull {model_name}"
 
 
 def doctor(
@@ -62,6 +102,37 @@ def doctor(
         ollama_status, ollama_detail = _probe_http(settings.ollama_base_url + "/api/version")
         if ollama_status:
             table.add_row("Ollama", _OK, f"{settings.ollama_base_url} ({ollama_detail})")
+            model = _resolved_ollama_model(settings)
+            tags_url = settings.ollama_base_url.rstrip("/") + "/api/tags"
+            try:
+                tags_resp = asyncio.run(_get(tags_url))
+            except Exception as exc:
+                table.add_row(
+                    "Ollama model (optional)",
+                    _WARN,
+                    f"Could not read /api/tags ({type(exc).__name__})",
+                )
+            else:
+                if tags_resp.status_code >= 400:
+                    table.add_row(
+                        "Ollama model (optional)",
+                        _WARN,
+                        f"/api/tags returned {tags_resp.status_code}",
+                    )
+                else:
+                    try:
+                        tags_body = tags_resp.json()
+                    except json.JSONDecodeError:
+                        table.add_row("Ollama model (optional)", _WARN, "/api/tags not valid JSON")
+                    else:
+                        if isinstance(tags_body, dict):
+                            present, msg = _parse_ollama_tags_for_model(tags_body, model)
+                            if present:
+                                table.add_row("Ollama model", _OK, msg)
+                            else:
+                                table.add_row("Ollama model", _WARN, msg)
+                        else:
+                            table.add_row("Ollama model (optional)", _WARN, "unexpected /api/tags body")
         else:
             table.add_row("Ollama (optional)", _WARN, ollama_detail)
     else:
