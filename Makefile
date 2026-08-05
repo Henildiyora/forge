@@ -1,26 +1,38 @@
-PYTHON ?= python3
+PYTHON ?= .venv/bin/python
 
-.PHONY: install test e2e lint run api clean
+.PHONY: install fixtures test lint run-offline benchmark dashboard stack-up stack-down seed clean
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
 
-test:
-	pytest -q
+fixtures:
+	$(PYTHON) -m benchmark.seed_prometheus --generate-only
 
-e2e:
-	pytest -q -m e2e
+test:
+	$(PYTHON) -m pytest -q
 
 lint:
-	ruff check forge tests
-	mypy forge tests
+	$(PYTHON) -m ruff check swarm benchmark tests
+	$(PYTHON) -m mypy swarm benchmark
 
-run:
-	$(PYTHON) -m forge.main
+run-offline:
+	$(PYTHON) -m swarm run --scenario payment_timeout --offline --skip-llm --max-repair-attempts 0
 
-api:
-	uvicorn forge.api.app:create_app --factory --reload
+benchmark:
+	$(PYTHON) -m benchmark.benchmark --offline
+
+dashboard:
+	$(PYTHON) -m streamlit run dashboard/app.py
+
+stack-up:
+	docker compose up -d --build
+
+stack-down:
+	docker compose down
+
+seed:
+	$(PYTHON) -m benchmark.seed_prometheus --all
 
 clean:
-	rm -rf .pytest_cache .ruff_cache .mypy_cache __pycache__
+	rm -rf .pytest_cache .ruff_cache .mypy_cache .swarm
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

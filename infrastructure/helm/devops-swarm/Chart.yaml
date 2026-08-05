@@ -1,6 +1,0 @@
-apiVersion: v2
-name: devops-swarm
-description: Helm chart for DevOps Swarm
-type: application
-version: 0.1.0
-appVersion: "0.1.0"

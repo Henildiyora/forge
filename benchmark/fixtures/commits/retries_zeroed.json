@@ -1,0 +1,58 @@
+{
+  "repository": "acme/checkout-api",
+  "label": "benchmark fixture \u2014 not production commit history",
+  "scenario_id": "retries_zeroed",
+  "commits": [
+    {
+      "sha": "d00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "author": "bot",
+      "message": "docs: update runbook",
+      "timestamp": "2026-08-04T18:42:00Z",
+      "files_changed": [
+        "docs/runbook.md"
+      ],
+      "url": "https://github.com/acme/checkout-api/commit/decoy0"
+    },
+    {
+      "sha": "d01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "author": "bot",
+      "message": "chore: bump CI timeout",
+      "timestamp": "2026-08-04T18:57:00Z",
+      "files_changed": [
+        ".github/workflows/ci.yml"
+      ],
+      "url": "https://github.com/acme/checkout-api/commit/decoy1"
+    },
+    {
+      "sha": "d02eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "author": "bot",
+      "message": "refactor: tidy logging",
+      "timestamp": "2026-08-04T19:07:00Z",
+      "files_changed": [
+        "checkout/logging.py"
+      ],
+      "url": "https://github.com/acme/checkout-api/commit/decoy2"
+    },
+    {
+      "sha": "c3d4e5f60718293a4b5c6d7e8f90123456789abc",
+      "author": "jordan.lee",
+      "message": "fix: set MAX_RETRIES=0 to fail fast on payment errors",
+      "files_changed": [
+        "sandbox/target_service/app.py",
+        "payments/retry.py"
+      ],
+      "timestamp": "2026-08-04T19:22:00Z",
+      "url": "https://github.com/acme/checkout-api/commit/c3d4e5f6"
+    },
+    {
+      "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "author": "oncall",
+      "message": "chore: page oncall about checkout errors",
+      "timestamp": "2026-08-04T19:33:00Z",
+      "files_changed": [
+        "docs/incident.md"
+      ],
+      "url": "https://github.com/acme/checkout-api/commit/eeeeeeee"
+    }
+  ]
+}

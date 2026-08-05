@@ -17,6 +17,9 @@ __pycache__/
 
 # Local generated artifacts
 artifacts/
+.swarm/
+.DS_Store
+infrastructure/prometheus/seed/
 
 # Distribution / packaging
 .Python

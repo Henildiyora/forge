@@ -1,166 +1,149 @@
-# FORGE
+# DevOps Swarm
 
-FORGE is the AI DevOps engineer that lives in your terminal. Point it at any
-project and it will write the Dockerfile, the Kubernetes manifests, the CI/CD
-pipeline, and watch the deployment afterwards — with explicit safety gates and
-a tamper-evident audit trail.
+A three-agent LangGraph pipeline that triages a service incident end-to-end:
 
-## Install
+1. **Monitoring Agent** — queries Prometheus, detects error-ratio spikes with a
+   rolling-window z-score, writes an `IncidentSignal` into shared state.
+2. **Code Analysis Agent** — reads `IncidentSignal.start_timestamp` from that
+   shared state, pulls commits in a `-60/+5 min` window (GitHub API or fixture
+   replay), ranks them with an explicit heuristic.
+3. **Ops Agent** — synthesizes both prior outputs into a `ProposedFix` via
+   Anthropic tool calling (or a deterministic planner when no API key is set).
+4. **Dry-run gate** — applies the fix inside a throwaway Docker container,
+   hits `/healthz` + `/checkout`, and records a real `DryRunResult`. Pass →
+   `ready_to_apply`. Fail with no repair budget left → `needs_human_review`
+   (never an infinite auto-retry loop).
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Henildiyora/forge/main/install.sh | bash
-```
+See [`AUDIT.md`](AUDIT.md) for what the previous FORGE codebase did and did
+not implement relative to these claims.
 
-This installs FORGE globally with `pipx`. No Python virtual environment to
-manage. No API keys required.
+## Honest scope
 
-If `forge` is not found after install, run:
-
-```bash
-pipx ensurepath
-exec $SHELL -l
-which forge
-forge doctor --post-install
-```
-
-### Optional: Homebrew (macOS)
-
-If you maintain a tap, you can install from HEAD:
-
-```bash
-brew tap henildiyora/forge https://github.com/Henildiyora/forge.git
-brew install --HEAD forge
-```
-
-The `curl | bash` + `pipx` path remains the default until stable PyPI releases ship.
+**Benchmark scenarios, not production-deployed.** Metric series and commit
+histories used by the harness are seeded fixtures. The Prometheus *query path*
+is real HTTP against `/api/v1/query_range` (or an in-process OpenMetrics replay
+when `--offline` is set). Nothing here pages oncall or mutates a live cluster.
+Applying a `ready_to_apply` fix is left to a human.
 
 ## Quick start
 
 ```bash
-cd my-project
-forge index
-forge build
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
+# regenerate seeded fixtures
+make fixtures
+
+# end-to-end offline run (no Docker/Prometheus required for metrics;
+# Docker IS required for the dry-run sandbox)
+swarm run --scenario payment_timeout --offline --skip-llm --max-repair-attempts 0
 ```
 
-That's it. FORGE scans the project, shows a **project preview**, proposes **ranked
-deployment strategies**, runs specialist agents through the **Manager + Captain**
-review path for Docker / Kubernetes / CI-only flows, and writes artifacts into
-`.forge/generated/` plus a detailed `instruction_deploy.md`. Use **`forge ask`**
-or **`forge chat`** to talk to the Manager about what was generated. Heuristic
-backend by default — works fully offline.
-
-> **30-second demo:** [`docs/demo.cast`](docs/demo.cast) (record locally with
-> `scripts/record-demo.sh`, then upload to asciinema or embed as SVG).
-
-## Even better: ask in plain English (optional)
-
-Install Ollama once, then FORGE picks it up automatically:
+### Live Prometheus (optional)
 
 ```bash
-brew install ollama && ollama pull qwen2.5-coder:1.5b
-forge setup
-forge build --goal "deploy this as a serverless function on AWS"
+docker compose up -d --build
+python -m benchmark.seed_prometheus --scenario payment_timeout
+swarm run --scenario payment_timeout --skip-llm --max-repair-attempts 0
 ```
 
-## Commands
+### Dashboard
 
-| Command | Purpose |
-|---------|---------|
-| `forge index` | Scan the project, save `.forge/index.json`. |
-| `forge build` | Preview → ranked strategies → Manager + specialists + Captain → artifacts. |
-| `forge ask` | Ask the Manager a question about your project or last build. |
-| `forge chat` | Multi-turn REPL with the Manager (`/exit`, `/explain <file>`). |
-| `forge explain` | Plain-English explanation of a file under `.forge/generated/`. |
-| `forge monitor` | Run a Watchman snapshot or escalate to incident workflow. |
-| `forge setup` | Pick the best LLM backend for your machine. |
-| `forge doctor` | Health-check Python, Ollama, kubectl, Slack, Redis. |
-| `forge audit` | Show every action FORGE has taken in this project. |
-| `forge reset` | Delete `.forge/` for a clean slate. |
+```bash
+streamlit run dashboard/app.py
+```
 
-## How it works
+The UI tails `.swarm/runs/<run_id>.jsonl` written by the graph as nodes
+execute. Status lights are driven by those events, not by `sleep()`.
+
+## Architecture
 
 ```mermaid
-flowchart LR
-    A[Codebase] --> B[Librarian scan]
-    B --> C[Manager preview plus ranked strategies]
-    C --> D[Specialist agents plus Captain]
-    D --> F[Sandbox validate]
-    F -->|Ready| G[Approval gate]
-    G -->|Approved| H[Live deploy]
-    H --> I[Watchman]
-    I -->|Incident| J[Remediation loop]
-    J --> G
+flowchart TD
+    monitoring[monitoring_agent] -->|no anomaly| noIncident[no_incident]
+    monitoring -->|IncidentSignal| codeAnalysis[code_analysis_agent]
+    codeAnalysis --> ops[ops_agent]
+    ops --> dryRun[dry_run_validate]
+    dryRun -->|pass| ready[ready_to_apply]
+    dryRun -->|fail, attempts left| ops
+    dryRun -->|fail, budget spent| review[needs_human_review]
 ```
 
-Specialist agents (Docker, Kubernetes, CI/CD, Cloud, Sandbox, Watchman,
-Remediation) are isolated and orchestrated through LangGraph. The Captain
-agent reviews every step. Every system-touching action goes through a safety
-gate **and** is appended to `.forge/audit.log`.
+Shared state is a single Pydantic `SwarmState` (`swarm/schemas.py`). Every tool
+call goes through `ToolCall` / `ToolResult` in `swarm/tools/registry.py`.
 
-## Trust
+### Anomaly detection
 
-FORGE writes to your filesystem and your cluster. We take that seriously:
+Leading `baseline_fraction` of the series defines mean/stdev. A sample is a
+breach when `z >= z_threshold` **and** `value/baseline >= min_spike_ratio`.
+Defaults: `z_threshold=3.0`, `min_spike_ratio=2.0`, `baseline_fraction=0.5`.
 
-- Five gates before any live Kubernetes write (sandbox passed, dry-run passed,
-  approval granted, task id present, dry-run mode off).
-- Hallucination guard: no fix proposal that changes anything is accepted
-  unless it cites evidence and clears the confidence threshold.
-- Append-only audit log at `.forge/audit.log` — readable with `forge audit`.
-- Default LLM backend (`heuristic`) makes zero network calls.
-- Cloud writes (AWS/GCP) are intentionally **not shipped in v0.1**.
+### Commit ranking (heuristic, not ML)
 
-Read the full contract in [`docs/trust.md`](docs/trust.md).
+```
+relevance = 0.55 * proximity + 0.35 * path_overlap + 0.10 * config_touch
+```
 
-## Optional integrations
+### Dry-run failure behavior
 
-- **Kubernetes** — `forge build --live` after a sandbox + approval cycle.
-  Local Kubernetes validation uses `vcluster`; install with
-  `brew install loft-sh/tap/vcluster` on macOS.
-- **Slack approvals** — set `SLACK_SIGNING_SECRET` and FORGE posts approval
-  buttons that resume your workflow when a human clicks.
-- **Cloud read-only inspection** — `forge connect --cloud-provider aws`
-  fetches cost and posture data; never writes.
-- **Existing CI/CD** — generators emit GitHub Actions / GitLab CI YAML you
-  can drop into your repo as a starting point.
+1. Copy `sandbox/target_service` into a temp dir.
+2. Apply `ProposedFix` actions (`env_override` / `file_replace`).
+3. `docker build` + `docker run` on an ephemeral port.
+4. Assert `/healthz == 200` and `POST /checkout == 200`.
+5. Tear down the container and image.
+6. If checks fail: append `DryRunResult` with logs, and either re-enter Ops
+   (while `repair_attempts < max_repair_attempts`) or route to
+   `needs_human_review` with the rejection reason attached.
 
-If your goal is just Docker/Docker Hub, FORGE asks you to choose between
-Docker Compose and Kubernetes when project complexity signals conflict.
+If Docker is not reachable the dry-run fails loudly (`rejection_reason=
+docker_unavailable`) rather than returning a fake pass.
+
+## Benchmark
+
+```bash
+python -m benchmark.benchmark --offline
+# → benchmark/benchmark_results.json
+# → benchmark/benchmark_results.md
+```
+
+Manual triage baselines are documented per-step estimates in
+[`benchmark/baseline_methodology.md`](benchmark/baseline_methodology.md).
+The reduction percentage in the report is recomputed from measured swarm
+wall-clock each run — it is not a hardcoded README claim.
+
+Latest harness run (`benchmark/benchmark_results.md`, offline fixtures +
+warm Docker cache): **~99.8% average reduction** (≈860s manual baseline →
+≈1.5s swarm). That number will move if you re-run with a cold Docker cache
+or `--live-prometheus`; cite whatever `benchmark_results.md` currently
+shows, not a remembered figure.
 
 ## Configuration
 
-Zero config required. Override anything in `.env`:
-
 ```bash
 cp .env.example .env
+# ANTHROPIC_API_KEY=...   # optional; enables Claude for Ops
+# GITHUB_TOKEN=...        # optional; enables --commit-source live
+# PROMETHEUS_URL=http://localhost:9090
 ```
 
-Full reference: [`docs/configuration.md`](docs/configuration.md).
-
-## Documentation
-
-| Topic | Where |
-|-------|-------|
-| Trust, safety gates, audit | [`docs/trust.md`](docs/trust.md) |
-| Configuration reference | [`docs/configuration.md`](docs/configuration.md) |
-| Adding a new agent | [`docs/adding-a-new-agent.md`](docs/adding-a-new-agent.md) |
-| Adding a new integration | [`docs/adding-a-new-integration.md`](docs/adding-a-new-integration.md) |
-| Operational runbook | [`docs/runbook.md`](docs/runbook.md) |
-| Phase 2 deep dive | [`docs/phase2.md`](docs/phase2.md) |
-
-## Development
+## Tests
 
 ```bash
-git clone https://github.com/Henildiyora/forge.git
-cd forge
-make install
-make test       # unit + integration
-make e2e        # end-to-end (some require docker / RUN_K8S_E2E=1)
-make lint
+make test
 ```
 
-The full test suite is at `tests/`; end-to-end suites live in `tests/e2e/`
-and snapshot tests at `tests/test_generator_snapshots.py`.
+Covers anomaly math, commit scoring, tool registry validation, Ops heuristic
+planning, and graph routing into `no_incident` / `ready_to_apply` /
+`needs_human_review`.
 
-## License
+## Layout
 
-See `LICENSE`.
+```
+swarm/           agents, tools, graph, dry-run, CLI
+sandbox/         target_service the dry-run boots
+benchmark/       scenarios, fixtures, harness, baseline methodology
+dashboard/       Streamlit live pipeline view
+infrastructure/  Prometheus config
+AUDIT.md         pre-rebuild findings
+```

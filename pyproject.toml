@@ -3,75 +3,67 @@ requires = ["hatchling>=1.25,<2.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "forge-devops"
-version = "0.1.0"
-description = "Terminal-first AI DevOps engineer that plans, generates, validates, and watches deployments."
+name = "devops-swarm"
+version = "0.2.0"
+description = "Three-agent LangGraph incident triage swarm with Docker dry-run validation."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-keywords = ["devops", "ai", "kubernetes", "docker", "ci-cd", "sre", "infrastructure"]
+keywords = ["devops", "langgraph", "prometheus", "sre", "incident-response"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Topic :: Software Development",
-    "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "fastapi>=0.110,<0.120",
     "langgraph>=0.1,<0.2",
-    "langchain-anthropic>=0.1,<0.2",
-    "openai>=1.0,<2.0",
     "pydantic>=2.0,<3.0",
     "pydantic-settings>=2.0,<3.0",
-    "structlog>=24.0,<25.0",
+    "httpx>=0.27,<0.28",
+    "PyGithub>=2.0,<3.0",
     "typer>=0.9,<1.0",
     "rich>=13.0,<14.0",
-    "kubernetes>=29.0,<30.0",
-    "PyGithub>=2.0,<3.0",
-    "httpx>=0.27,<0.28",
+    "structlog>=24.0,<25.0",
+    "fastapi>=0.110,<0.120",
     "uvicorn>=0.30,<0.31",
-    "pyyaml>=6.0,<7.0",
 ]
 
 [project.optional-dependencies]
-redis = ["redis>=5.0,<6.0"]
-observability = [
-    "ragas>=0.1,<0.2",
+dashboard = [
+    "streamlit>=1.32,<2.0",
+    "pandas>=2.0,<4.0",
 ]
 dev = [
     "mypy>=1.10,<2.0",
     "pytest>=8.2,<9.0",
     "pytest-asyncio>=0.23,<0.24",
     "ruff>=0.5,<0.6",
-    "redis>=5.0,<6.0",
+    "streamlit>=1.32,<2.0",
+    "pandas>=2.0,<4.0",
 ]
 
 [project.urls]
 Homepage = "https://github.com/Henildiyora/forge"
-Documentation = "https://github.com/Henildiyora/forge/tree/main/docs"
-Issues = "https://github.com/Henildiyora/forge/issues"
 Source = "https://github.com/Henildiyora/forge"
 
 [project.scripts]
-forge = "forge.cli.main:app"
+swarm = "swarm.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["forge"]
+packages = ["swarm", "benchmark"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests", "forge"]
+testpaths = ["tests"]
 markers = [
     "unit: fast isolated unit tests",
-    "integration: integration-style tests for composed components",
-    "e2e: end-to-end tests that run against real Docker, Kubernetes, or external services",
+    "integration: integration-style tests",
+    "e2e: end-to-end tests that need Docker",
 ]
 
 [tool.ruff]
@@ -84,4 +76,4 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-packages = ["forge", "tests"]
+packages = ["swarm", "benchmark", "tests"]

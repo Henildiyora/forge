@@ -1,0 +1,30 @@
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    container_name: swarm-prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=6h"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/prometheus/seed:/seed:ro
+      - prometheus-data:/prometheus
+
+  target_service:
+    build: ./sandbox/target_service
+    container_name: swarm-target-service
+    ports:
+      - "8080:8080"
+    environment:
+      # Broken-by-default so a no-fix dry-run fails for real.
+      PAYMENT_TIMEOUT_MS: "50"
+      FEATURE_CHECKOUT_V2: "false"
+      MAX_RETRIES: "3"
+
+volumes:
+  prometheus-data:
+    name: devops-swarm_prometheus-data

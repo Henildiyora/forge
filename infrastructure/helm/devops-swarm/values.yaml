@@ -1,6 +1,0 @@
-image:
-  repository: devops-swarm
-  tag: latest
-
-service:
-  port: 8000
