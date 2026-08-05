@@ -9,6 +9,7 @@ __pycache__/
 # Environment files
 .env
 .env.local
+config.yaml
 
 # Test and type-check caches
 .pytest_cache/

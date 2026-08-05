@@ -219,7 +219,10 @@ def _ops(state: SwarmState, runtime: SwarmRuntime) -> Any:
     # Re-entering after a failed dry-run consumes one repair attempt.
     if state.dry_run_results and not (state.latest_dry_run and state.latest_dry_run.passed):
         state.repair_attempts += 1
+    from swarm.fix_filter import apply_fix_allowlist
+
     fix = runtime.ops.run(state)
+    fix = apply_fix_allowlist(fix, state.config.fix_action_allowlist)
     state.proposed_fix = fix
     return {"proposed_fix": fix}
 

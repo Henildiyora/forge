@@ -1,0 +1,23 @@
+# Example live config for `swarm run --live`.
+# Copy to config.yaml and edit, or generate one with `swarm init`.
+# Secrets (GITHUB_TOKEN, ANTHROPIC_API_KEY) go in .env — never in this file.
+
+prometheus_url: http://localhost:9090
+error_metric_query: >-
+  sum(rate(http_requests_total{service="checkout-api",status=~"5.."}[1m]))
+  / clamp_min(sum(rate(http_requests_total{service="checkout-api"}[1m])), 0.001)
+github_repo: owner/your-service
+service_name: checkout-api
+service_paths:
+  - sandbox/target_service/
+  - ./
+service_health_endpoints:
+  - /healthz
+service_dockerfile_path: sandbox/target_service/Dockerfile
+service_build_context: sandbox/target_service
+fix_action_allowlist:
+  - env_override
+  - file_replace
+lookback_minutes: 60
+container_port: 8080
+runtime_env: {}

@@ -303,6 +303,29 @@ class SwarmConfig(BaseModel):
     scenario_id: str | None = Field(
         default=None, description="Benchmark scenario id when running seeded data."
     )
+    health_endpoints: list[str] = Field(
+        default_factory=lambda: ["/healthz", "/checkout"],
+        description="Paths the dry-run probes. Demo default keeps /healthz + /checkout; "
+        "live configs usually pass GET-only paths like ['/health'].",
+    )
+    service_root: str | None = Field(
+        default=None,
+        description="Build context for dry-run. None uses Settings.sandbox_service_path.",
+    )
+    dockerfile_path: str | None = Field(
+        default=None,
+        description="Dockerfile path for `docker build -f`. None means Dockerfile in context.",
+    )
+    container_port: int = Field(
+        default=8080,
+        ge=1,
+        le=65535,
+        description="Container listen port mapped for smoke checks.",
+    )
+    fix_action_allowlist: list[str] | None = Field(
+        default=None,
+        description="When set, Ops ProposedFix actions are filtered to these kinds.",
+    )
 
 
 class SwarmState(BaseModel):

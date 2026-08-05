@@ -100,6 +100,38 @@ class PrometheusClient:
             endpoint=f"{self.base_url}/api/v1/query_range",
         )
 
+    def query_instant(self, query: str) -> tuple[float | None, str]:
+        """Run an instant query; return (value_or_None, human summary)."""
+
+        response = self._client.get("/api/v1/query", params={"query": query})
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("status") != "success":
+            raise RuntimeError(f"prometheus returned status={payload.get('status')!r}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return None, "no data object in response"
+        result = data.get("result")
+        if not isinstance(result, list) or not result:
+            return None, "query returned 0 series (empty result)"
+        first = result[0]
+        if not isinstance(first, dict):
+            return None, "unexpected series shape"
+        value = first.get("value")
+        if not isinstance(value, list | tuple) or len(value) != 2:
+            return None, "series had no instant value"
+        try:
+            numeric = float(value[1])
+        except (TypeError, ValueError):
+            return None, f"non-numeric value: {value[1]!r}"
+        if numeric != numeric:
+            return None, "value was NaN (often means no matching samples)"
+        labels = first.get("metric", {})
+        label_txt = ""
+        if isinstance(labels, dict) and labels:
+            label_txt = " " + str(labels)
+        return numeric, f"{numeric}{label_txt}"
+
     def is_ready(self) -> bool:
         """Whether Prometheus answers its readiness probe."""
 
@@ -129,7 +161,10 @@ def _parse_series(payload: dict[str, object]) -> list[MetricSeries]:
         if not isinstance(entry, dict):
             continue
         labels = entry.get("metric", {})
+        # Range queries use "values"; instant queries use "value".
         raw_values = entry.get("values", [])
+        if (not raw_values) and "value" in entry:
+            raw_values = [entry.get("value")]
         samples: list[MetricSample] = []
         if isinstance(raw_values, list):
             for point in raw_values:

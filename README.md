@@ -48,6 +48,29 @@ python -m benchmark.seed_prometheus --scenario payment_timeout
 swarm run --scenario payment_timeout --skip-llm --max-repair-attempts 0
 ```
 
+### Connect to a real service
+
+This is separate from the fixture Quick Start above. It points the **same**
+LangGraph at your Prometheus, GitHub repo, and Dockerfile via `config.yaml`.
+
+1. Run `swarm init` and answer each prompt (every step shows real output).
+2. When it asks for your Prometheus error query, discover metric names first:
+   ```bash
+   curl http://<your-prometheus>:9090/api/v1/label/__name__/values
+   ```
+3. When it asks for GitHub, create a fine-grained or classic token with **repo
+   read** scope: https://github.com/settings/tokens — put the token in `.env`
+   as `GITHUB_TOKEN=...` (never in `config.yaml`).
+4. When it asks for your Dockerfile, point it at your service’s existing
+   Dockerfile and build context — no changes needed to that file.
+5. Once setup validation passes:
+   ```bash
+   swarm run --live
+   ```
+
+Copy [`config.example.yaml`](config.example.yaml) to `config.yaml` if you prefer
+to edit by hand instead of using `swarm init`.
+
 ### Dashboard
 
 ```bash
@@ -55,7 +78,8 @@ streamlit run dashboard/app.py
 ```
 
 The UI tails `.swarm/runs/<run_id>.jsonl` written by the graph as nodes
-execute. Status lights are driven by those events, not by `sleep()`.
+execute. Status lights are driven by those events, not by `sleep()`. Both
+`--offline` demo runs and `--live` runs use the same event format.
 
 ## Architecture
 
